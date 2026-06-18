@@ -303,6 +303,19 @@ def _recapture_opp():
         "1", "true", "on", "yes")
 
 
+def _confident_only():
+    """PIVOT (default OFF). Commit only HIGH-CONFIDENCE actions. Of the launches
+    we are about to play (usually the producer's move), keep a capture only if we
+    can HOLD the planet we take -- the garrison we land with (ships sent minus the
+    target's defenders) is at least the enemy force that can still reach it
+    (in-flight fleets + nearby parked garrison, discounted). Safe grabs (nothing
+    can reach them) and reinforcements of our own planets are always kept; thin
+    contested grabs that would flip straight back are dropped, and those ships stay
+    home. No count cap, no concentration -- just confidence. Set LR_CONFIDENT=1."""
+    return os.environ.get("LR_CONFIDENT", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _recapture_moves(obs_dict, seat, exclude_srcs=()):
     """A competent opponent's reactive recapture, used ONLY inside the lookahead's
     opponent replies: `seat` launches from its nearest unused source to retake the
@@ -670,6 +683,80 @@ def _comet_paths_by_id_safe(obs_d):
         return {}
 
 
+def _reachable_enemy_force(tx, ty, tid, planets, fleets, me):
+    """Enemy force that can still reach the planet at (tx, ty) after we take it:
+    in-flight enemy fleets within THREAT_RADIUS (full weight) + nearby parked
+    enemy garrison (STATIONED_DISCOUNT), EXCLUDING the target itself (tid -- its
+    garrison is what we just captured)."""
+    t = 0.0
+    for fl in fleets:
+        o = int(fl.owner)
+        if o == me or o == -1:
+            continue
+        if dist((tx, ty), (float(fl.x), float(fl.y))) <= THREAT_RADIUS:
+            t += float(fl.ships)
+    for p in planets:
+        o = int(p.owner)
+        if o == me or o == -1 or int(p.id) == tid:
+            continue
+        if dist((tx, ty), (float(p.x), float(p.y))) <= THREAT_RADIUS:
+            t += STATIONED_DISCOUNT * float(p.ships)
+    return t
+
+
+def _keep_confident_launches(move, planets, fleets, by_id, me,
+                             comet_ids, comet_paths, omega):
+    """Keep only HIGH-CONFIDENCE actions. Launches are grouped by their target
+    (matched via the agent's own intercept aim, so a coordinated gang-up is judged
+    as one capture). A capture of an enemy/neutral planet is kept only if the
+    garrison we land with -- (total ships sent) minus the target's current
+    defenders -- is at least the enemy force that can still reach it (so we can
+    HOLD it). Reinforcements of our own planets are always kept; a launch we cannot
+    confidently classify is kept (never dropped on a guess). Dropped launches'
+    ships stay home. No count cap, no concentration."""
+    if not move:
+        return move
+    groups = {}                 # tid -> list of launch indices
+    unclassified = []           # launches we keep regardless
+    for launch in move:
+        sid = int(launch[0])
+        ang = float(launch[1])
+        sh = launch[2]
+        src = by_id.get(sid)
+        if src is None:
+            unclassified.append(launch)
+            continue
+        best, bd = None, 1e9
+        for p in planets:
+            if int(p.id) == sid:
+                continue
+            shot = _plan_shot(src, p, comet_ids, comet_paths, omega, max(1, int(sh)))
+            if shot is None:
+                continue
+            d = abs(shot[0] - ang)
+            d = min(d, 2.0 * math.pi - d)
+            if d < bd:
+                bd, best = d, p
+        if best is None or bd > 0.10:
+            unclassified.append(launch)      # can't classify -> keep
+        else:
+            groups.setdefault(int(best.id), []).append(launch)
+    kept = list(unclassified)
+    for tid, launches in groups.items():
+        tgt = by_id[tid]
+        if int(tgt.owner) == me:
+            kept.extend(launches)            # reinforcing our own planet -> keep
+            continue
+        total = sum(float(l[2]) for l in launches)
+        surplus = total - float(tgt.ships)   # garrison left after taking it
+        threat = _reachable_enemy_force(float(tgt.x), float(tgt.y), tid,
+                                        planets, fleets, me)
+        if surplus >= threat:                # we can hold it -> high confidence
+            kept.extend(launches)
+        # else: thin contested grab that flips back -> drop, ships stay home
+    return kept
+
+
 # --------------------------------------------------------------------------
 # The agent.
 #
@@ -748,6 +835,14 @@ def agent(obs, configuration=None):
 
     available = {int(p.id): int(p.ships) for p in my_planets}
     by_id = {int(p.id): p for p in planets}
+
+    confident_only = _confident_only()
+
+    def _confident(move):
+        if not confident_only:
+            return move
+        return _keep_confident_launches(move, planets, fleets, by_id, me,
+                                        comet_ids, comet_paths, omega)
     # each candidate: emit=[[src_id,angle,ships],...], units=[(src_slot,tgt_slot,ships,eta),...],
     #                 srcs={src_id:ships}, rank, front
     candidates = []
@@ -1044,7 +1139,7 @@ def agent(obs, configuration=None):
                 continue
             if best_v is None or v > best_v:
                 best, best_v = p, v
-        return best
+        return _confident(best)
 
     # ---- 2-ply lookahead pick (2P only): choose among a few full-plans by
     #      their value AFTER the producer's reply + a producer-vs-producer turn,
@@ -1078,11 +1173,11 @@ def agent(obs, configuration=None):
         try:
             depth = _rollout_depth()
             if depth >= 2:
-                return _deep_pick(obs, configuration, me, num_seats, uniq,
-                                  depth, budget_ms=_deep_budget(obs_d))
-            return _twoply_pick(obs, configuration, me, num_seats, uniq,
-                                budget_ms=_twoply_budget(obs_d) if anytime_on else _rem)
+                return _confident(_deep_pick(obs, configuration, me, num_seats,
+                                  uniq, depth, budget_ms=_deep_budget(obs_d)))
+            return _confident(_twoply_pick(obs, configuration, me, num_seats, uniq,
+                              budget_ms=_twoply_budget(obs_d) if anytime_on else _rem))
         except Exception:
-            return committed_emit
+            return _confident(committed_emit)
 
-    return committed_emit
+    return _confident(committed_emit)
