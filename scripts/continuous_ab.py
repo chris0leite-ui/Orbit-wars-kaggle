@@ -103,6 +103,18 @@ VARIANT_SETS = {
                                 if k != "PRODUCER_PLUS_DROPOUT"},
                                PRODUCER_PLUS_NATIVE_HAZARD=1,
                                PRODUCER_PLUS_NATIVE_STEEPNESS=8.0),
+            # Bracket the hazard steepness to test whether the flip-hazard term
+            # is load-bearing at all (s0.5 ~ flat hazard ~ pure ownership margin;
+            # s20 ~ hard contest). If all three ~equal, the hazard is inert and
+            # Phase A is really testing ownership-margin vs the tuned scorer.
+            "native_s0.5":  _v({k: v for k, v in _DROP_BASE.items()
+                                if k != "PRODUCER_PLUS_DROPOUT"},
+                               PRODUCER_PLUS_NATIVE_HAZARD=1,
+                               PRODUCER_PLUS_NATIVE_STEEPNESS=0.5),
+            "native_s20":   _v({k: v for k, v in _DROP_BASE.items()
+                                if k != "PRODUCER_PLUS_DROPOUT"},
+                               PRODUCER_PLUS_NATIVE_HAZARD=1,
+                               PRODUCER_PLUS_NATIVE_STEEPNESS=20.0),
             "more_sims4":   _v(_DROP_BASE, PRODUCER_PLUS_DROPOUT_SCENARIOS=4),
             "incentive":    _v(_DROP_BASE, PRODUCER_PLUS_DROPOUT_INCENTIVE=1),
             "winprob_g0.5": _v(_DROP_BASE, PRODUCER_PLUS_DROPOUT_WINPROB=0.5),

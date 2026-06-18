@@ -83,9 +83,25 @@ terminal-prod / hold-value hacks.
 - **Wired** into producer_plus behind `PRODUCER_PLUS_NATIVE_HAZARD` (default OFF,
   OFF path byte-identical — verified). Bundles cleanly (cold-load full game vs V2
   OK). Knobs: `_STEEPNESS` (default 5), `_DISCOUNT` (default 1).
-- **Kill-gate A/B IN PROGRESS** via `scripts/continuous_ab.py --variants
-  base,native,native_s8` (paired continuous margin vs V2, n=40). Result + verdict
-  recorded below when complete.
+- **Kill-gate A/B RESULT (n=40 paired, continuous margin vs V2):**
+  | variant | wins | mean margin | paired Δ vs base |
+  |---|---|---|---|
+  | base (bolt-on) | 21/40 | +0.051 | — |
+  | native (steep 5) | 19/40 | −0.050 | −0.101 [−0.45,+0.25] up/dn 6/9 |
+  | native_s8 | 19/40 | −0.050 | identical to steep 5 on ALL 40 maps |
+
+  **Verdict: Phase A does NOT pass the kill-gate** — native is below base
+  (Δmargin −0.10, point estimate negative; CI brackets 0 so not a significant
+  *regression*, but it does not BEAT base as the gate requires). HOWEVER, unlike
+  the saturated bolt-on (whose refinements were inert, ≤4 maps changed), native
+  is a genuine alternative policy: it changes **15/40 maps**, **winning 5 maps
+  base loses** (5002/5003/5018/5026/5029) while losing 7 base wins, and it is
+  **faster** (max 223 ms vs 252 ms — no opponent mirror). So the forward model
+  has real expressive traction; its v1 instantiation just nets slightly worse.
+  **Caveat (see steepness bracket):** steep 5 ≡ steep 8 byte-for-byte, so the
+  flip-HAZARD term — the thesis core — may be inert, with the 15-map change
+  coming from replacing the tuned `competitive_score` with a plain ownership
+  margin. [bracket conclusion filled in below once the s0.5/s20 run lands.]
 
 ## Build phases (each default-OFF where grafted; each A/B-gated vs V2)
 - **Phase A (KILL-GATE): mean-field forward model + value functional**, scoring
