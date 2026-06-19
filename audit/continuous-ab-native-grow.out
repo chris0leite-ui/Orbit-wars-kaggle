@@ -1,1 +1,5 @@
 # continuous-ab  2026-06-19T08:27:12.012376+00:00  | 2P vs slawekbiel_the-producer-v2 | seeds 5000..5039 (n=40) | variants=base,native,native_grow,native_grow25,native_grow10 | 200 games to run (0 already done)
+  [  1/200] native_grow25 seed=5000 seat=0  loss  margin=-1.000  steps=131 max_ms=898.4  (eta 8856s)
+  [  2/200] native        seed=5000 seat=0  WIN   margin=+1.000  steps=138 max_ms=936.7  (eta 4505s)
+  [  3/200] native_grow   seed=5000 seat=0  WIN   margin=+1.000  steps=149 max_ms=904.0  (eta 3033s)
+  [  4/200] base          seed=5000 seat=0  WIN   margin=+0.962  steps=500 max_ms=274.0  (eta 2542s)
