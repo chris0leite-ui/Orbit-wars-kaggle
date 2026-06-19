@@ -12,13 +12,23 @@
   (~1-2 ms/node vs the mirror's ~10-50 ms). Default `0` = mirror = byte-identical.
   Unit-tested (`tests/test_deep_opp_dispatch.py`) + timing-smoked. Also installed
   CPU torch and folded it into `bootstrap.sh` (was missing → degraded prior repro).
-- **FIRST THING NEXT SESSION — the kill-gate (Rule 45):** with torch present, run
-  `LR_DEEP_OPP=1` × depth {3,4,5,6} vs Producer V2 via `scripts/eval_panel.py`,
-  triage n=16 → confirm best depth at n≥32. **Pass = cheaper-deeper ≥ mirror
-  depth-3 (17/28).** On PASS: build with header `LR_DEEP_OPP=1`+winning depth
-  (`scripts/build_least_resistance.sh` + the env-setdefault header, bank off) →
-  Rule 42 claim → PI-signed submit. On FAIL: knob stays default-OFF; consider
-  Phase 2 (`LR_DEEP_OPP=2`, neutral-contagion).
+- **Phase 2 landed (`LR_DEEP_OPP=2`):** model-free **contagion** opponent — each
+  rollout step flips neutrals + my under-defended planets to the strongest single
+  reachable rival (replaces opponent launches; `_apply_contagion`). Reuses the
+  `claude/dropout-plan-review-rb5817` principles (the branch's `native_forward.py`
+  was refuted as a leaf scorer; here the ideas are an *opponent model*). Tests:
+  `tests/test_contagion_opponent.py` (7 pass). Default-OFF byte-identical.
+- **n=8 triage vs Producer V2 (1v1, P0, seeds 5000-5007):** mirror_d3 4/8 (−538,
+  maxms **10067**=timeout); lite_d3 2/8 (−3168, 284 ms); contagion_d3 2/8 (**−2594**,
+  330 ms). Contagion is fast + a better model than lite, still below the mirror at
+  d3; depth-5/6 were running at session end. **No config beats V2 on these hard 8
+  seeds** (V2 is strong 1v1; the original "17/28" was a different/4P set).
+- **FIRST THING NEXT SESSION:** finish the depth-5/6 contagion triage; if any
+  config's margin approaches/beats the mirror, escalate to **n≥32 (Rule 45)** and
+  also try 4P + the original 28-map set (the 1v1-vs-V2 seeds may be unrepresentative).
+  Tune `LR_CONTAGION_REACH_TICKS` / the flip threshold if contagion is too
+  aggressive (every-candidate-flips = inert ranking, the branch's warning). Submit
+  only on an n≥32 PASS + Rule 42 claim + PI sign-off.
 - Details: `knowledge-base/thoughts/2026-06-19-validation-timeout-and-phase1-cheap-opponent.md`.
 
 ---

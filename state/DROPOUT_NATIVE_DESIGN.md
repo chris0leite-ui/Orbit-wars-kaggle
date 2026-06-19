@@ -146,3 +146,21 @@ triage n=16 → confirm best depth at n≥32 (Rule 45). Pass = cheaper-deeper
 `LR_DEEP_OPP=1` + the winning depth) + Rule 42 claim + PI-signed submit. On a
 FAIL the knob stays default-OFF (byte-identical) and Phase 2 (`LR_DEEP_OPP=2`,
 neutral-contagion) is the next idea.
+
+**Phase-1 triage result (2026-06-19, n=8 vs Producer V2, P0, same seeds):**
+mirror_d3 4/8 margin −538 (but maxms **10067** = the validation timeout);
+lite_d3 2/8 margin **−3168**. lite_greedy is fast but a WEAKER opponent model
+(too attack-biased, doesn't model rival expansion) → motivates Phase 2.
+
+### STATUS 2026-06-19 — Phase 2 (`LR_DEEP_OPP=2`) IMPLEMENTED as an OPPONENT model
+The branch `claude/dropout-plan-review-rb5817` refuted the mean-field flip-hazard
+model **as a leaf SCORER** (0/40 passive → 5/40 w/ opp-expansion → 19/40 parity;
+`native_forward.py`). Phase 2 reuses its *principles* (model neutral expansion,
+max-aggregate threat, cumulative, deterministic) in a NEW role: a discrete
+**contagion opponent** inside `_deep_pick`'s rollout (NOT a leaf scorer). Landed:
+`_apply_contagion(snap, me)` + the `LR_DEEP_OPP=2` branch (opponents launch
+nothing; each rollout step flips neutrals + my under-defended planets to the
+strongest single reachable rival, bounded one-flip-per-source, snowballing). Strong
+torch leaf `_project_value` unchanged. Unit-tested
+(`tests/test_contagion_opponent.py`). Kill-gate triage result recorded in the
+2026-06-19 thoughts note; n≥32 + PI sign-off gate any submit.

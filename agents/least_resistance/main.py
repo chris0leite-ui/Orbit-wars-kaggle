@@ -235,6 +235,13 @@ def _deep_opp():
     return _i("LR_DEEP_OPP", 0)
 
 
+def _contagion_reach_ticks():
+    """Per-step reach window for the contagion opponent (LR_DEEP_OPP=2): a rival
+    source can overrun a target within `fleet_speed(ships) * reach` of it this
+    step. Read at call time."""
+    return _f("LR_CONTAGION_REACH_TICKS", 3.0)
+
+
 def _deep_budget(obs_d):
     """Per-turn budget (ms) for deep rollout search. Draws a self-limiting slice
     of the episode overage bank (obs.remainingOverageTime) so pivotal turns can
@@ -420,6 +427,54 @@ def _deep_opp_move(obs_any, seat, mode):
     return _producer_move_obs(obs_any, seat)
 
 
+def _apply_contagion(snap, me):
+    """Mode-2 opponent (LR_DEEP_OPP=2): a deterministic, model-free CONTAGION flip
+    applied once per rollout step, REPLACING explicit opponent launches. Rivals
+    expand onto NEUTRALS and overrun MY under-defended planets; each target flips
+    toward the single STRONGEST reachable rival (max-aggregate threat, per the
+    dropout-plan-review learnings -- NOT the summed enemy mass). Each rival source
+    flips at most one target per step (bounded rate), so the front snowballs across
+    steps rather than swallowing the board in one tick; newly-flipped planets become
+    sources next step (compounding). No RNG -> rollout/CPU-GPU deterministic.
+
+    Operates in-place on the shared mutable planet rows
+    `[id, owner, x, y, radius, ships, production]` (the interpreter respects
+    in-place owner/ships edits). My reinforced/held planets out-mass the local rival
+    and survive, so the ranking signal is 'which planets does my move let me hold'."""
+    me = int(me)
+    planets = snap.state[0].observation.planets
+    reach = _contagion_reach_ticks()
+    rivals = [p for p in planets if int(p[1]) >= 0 and int(p[1]) != me]
+    if not rivals:
+        return
+    # Strongest rivals first so the first reachable match IS the max-threat source.
+    rivals.sort(key=lambda p: float(p[5]), reverse=True)
+    used = set()                       # rival source ids that already flipped this step
+    for tgt in planets:
+        owner = int(tgt[1])
+        if owner != -1 and owner != me:
+            continue                   # only neutrals and my planets can be overrun
+        # step() already accrued this turn's production, so current ships = defense.
+        defense = float(tgt[5])
+        tpt = (float(tgt[2]), float(tgt[3]))
+        trad = float(tgt[4])
+        for q in rivals:
+            qid = int(q[0])
+            if qid == int(tgt[0]) or qid in used:
+                continue
+            qships = float(q[5])
+            if qships <= defense:
+                continue               # this single rival can't out-mass the target
+            d = dist((float(q[2]), float(q[3])), tpt) - float(q[4]) - trad
+            spd = fleet_speed(qships)
+            if spd <= 0.0 or d > spd * reach:
+                continue               # not reachable this step
+            tgt[1] = int(q[1])         # flip ownership to the strongest reachable rival
+            tgt[5] = max(1.0, qships - defense)   # garrison with the landing surplus
+            used.add(qid)
+            break
+
+
 def _project_value(obs_any, me):
     """Position value: project the board `H` turns forward (all in-flight
     fleets + production + combat, no new launches) and return our garrison
@@ -511,22 +566,34 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
     snap = from_obs(obs, configuration, num_seats=num_seats)
     opps = [i for i in range(num_seats) if i != int(me)]
     opp_mode = _deep_opp()  # read the opponent-model knob once per turn
-    opp_now = {i: _deep_opp_move(snap.state[i].observation, i, opp_mode)
-               for i in opps}
+    # Mode 2 (contagion) REPLACES opponent launches with a per-step ownership flip,
+    # so it never calls the (expensive) opponent move models -- skip the opp cache.
+    contagion = (opp_mode == 2)
+    opp_now = ({} if contagion else
+               {i: _deep_opp_move(snap.state[i].observation, i, opp_mode)
+                for i in opps})
 
     def rollout_value(plan):
         s = clone(snap)
         acts = [[] for _ in range(num_seats)]
         acts[int(me)] = list(plan)
-        for i in opps:
-            acts[i] = list(opp_now[i])
+        if not contagion:
+            for i in opps:
+                acts[i] = list(opp_now[i])
         step(s, acts, in_place=True)
+        if contagion:
+            _apply_contagion(s, me)
         for _ in range(max(0, int(depth) - 1)):
             if s.fake_env.done:
                 break
-            nxt = [_deep_opp_move(s.state[i].observation, i, opp_mode)
-                   for i in range(num_seats)]
-            step(s, nxt, in_place=True)
+            if contagion:
+                # I take-and-hold (no further launches); rivals snowball via the flip.
+                step(s, [[] for _ in range(num_seats)], in_place=True)
+                _apply_contagion(s, me)
+            else:
+                nxt = [_deep_opp_move(s.state[i].observation, i, opp_mode)
+                       for i in range(num_seats)]
+                step(s, nxt, in_place=True)
         try:
             return _project_value(s.state[int(me)].observation, me)
         except Exception:

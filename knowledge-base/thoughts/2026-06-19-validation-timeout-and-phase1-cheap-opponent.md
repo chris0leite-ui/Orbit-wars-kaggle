@@ -72,6 +72,30 @@ depth headroom the strategy wanted. (Engineering note: single-BLAS-thread + full
 self-vs-self games were too heavy/slow for this box's background runner — they got
 killed; capped multi-thread games gave the clean read above.)
 
+## Phase 1 triage + Phase 2 (contagion opponent, `LR_DEEP_OPP=2`)
+n=8 vs Producer V2 (1v1, focal P0, same seeds 5000-5007), margin-first read:
+
+| opponent model | win | margin | max turn |
+|---|---|---|---|
+| mirror depth-3 (mode 0, shipped) | 4/8 | −538 | **10067 ms** ← the Kaggle timeout |
+| lite depth-3 (mode 1, Phase 1) | 2/8 | −3168 | 284 ms |
+| **contagion depth-3 (mode 2, Phase 2)** | 2/8 | **−2594** | **330 ms** |
+
+Read: lite_greedy is fast but the weakest model (−3168) — too attack-biased, no
+expansion. The **contagion** opponent (flip neutrals + my under-defended planets to
+the strongest single reachable rival, model-free, replaces opponent launches) is
+just as fast (330 ms, timing-safe) and a better model than lite (−2594), but still
+short of the mirror (−538) at depth 3. Deeper (5/6) results pending; only the mirror
+is strong here, and it's the one that times out. **No config beats Producer V2 on
+these 8 seeds** — but these are a hard 1v1 seed set (the original depth-3 "17/28"
+was a different/4P set). Implementation reuses the branch
+`claude/dropout-plan-review-rb5817` *principles* (model neutral expansion,
+max-aggregate threat, cumulative, deterministic) — its `native_forward.py` was
+refuted as a LEAF SCORER (0/40→5/40→19/40); here the same ideas are an OPPONENT
+model in the rollout (a new, untested-on-the-branch role). Code: `_apply_contagion`
++ `LR_DEEP_OPP=2` in `agents/least_resistance/main.py`; tests
+`tests/test_contagion_opponent.py` (7 pass).
+
 ## Open question for the kill-gate (next session)
 `lib/opp_model.py` warns lite_greedy is "too attack-biased" (in a *different*
 consumer — the baseline chooser's ME-defense baseline). As the *opponent* model in

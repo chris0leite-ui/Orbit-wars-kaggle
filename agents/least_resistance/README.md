@@ -83,7 +83,8 @@ Only **compute bounds** + the producer's ROI floor (not strategy weights):
 | `LR_WALLCLOCK_MS` | 700 | per-turn budget (bails the greedy loop) |
 | `LR_EVAL` | (auto) | force `orbit` or `fallback` evaluator |
 | `LR_ROLLOUT_DEPTH` | 0 | deep-search gate: 0 = 2-ply pick; ≥2 = K-turn rollout (`_deep_pick`) |
-| `LR_DEEP_OPP` | 0 | deep-search opponent model: 0 = producer mirror (`_producer_move_obs`, ~10-50 ms/node); 1 = cheap `lite_greedy_policy` (~1-2 ms/node) so the rollout affords more depth under the 1 s wall |
+| `LR_DEEP_OPP` | 0 | deep-search opponent model: 0 = producer mirror (`_producer_move_obs`, ~10-50 ms/node); 1 = cheap `lite_greedy_policy` (~1-2 ms/node); 2 = model-free **contagion** flip (`_apply_contagion`) — replaces opponent launches with a per-step ownership flip of neutrals + my under-defended planets toward the strongest single reachable rival |
+| `LR_CONTAGION_REACH_TICKS` | 3 | mode-2 reach window: a rival source can overrun a target within `fleet_speed(ships) * reach` of it this step |
 
 ## Run
 
