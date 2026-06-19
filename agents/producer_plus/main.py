@@ -2380,6 +2380,16 @@ def _native_discount() -> float:
         return 1.0
 
 
+def _native_opp_expansion() -> bool:
+    """Model the opponent EXPANDING onto neutrals (default ON). A reachable
+    neutral I leave unclaimed drifts to the opponent in the value functional, so
+    passivity has an opportunity cost — fixes the observed idleness where the
+    agent expanded a little then sat. Set 0 to ablate."""
+    return os.environ.get("PRODUCER_PLUS_NATIVE_OPP_EXPANSION", "1").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _native_selfconsist() -> bool:
     """Self-consistency / concentrated-adversary mode for the native hazard. The
     uniform per-planet leak was inert for candidate ranking (it cancels in the
@@ -3401,6 +3411,7 @@ def plan_lite_waves(
                 is_enemy=obs.is_enemy,
                 me=int(pid), steepness=_native_steepness(),
                 discount=_native_discount(), concentrate=_native_selfconsist(),
+                model_opp_expansion=_native_opp_expansion(),
             )
         except Exception as _native_err:
             # Fall back to the static score, but SURFACE the failure once — a

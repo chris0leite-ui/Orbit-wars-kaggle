@@ -161,6 +161,7 @@ def hazard_ownership_value(
     steepness: float = 5.0,
     discount: float = 1.0,
     concentrate: bool = False,
+    model_opp_expansion: bool = True,
 ) -> Tensor:
     """Expected production-weighted ownership margin over the horizon -> ``[C]``.
 
@@ -189,17 +190,32 @@ def hazard_ownership_value(
 
     is_mine = (owner == me).to(fdtype)
     is_opp = ((owner >= 0) & (owner != me)).to(fdtype)
+    is_neutral = (owner < 0).to(fdtype)
 
     k = torch.arange(H1, device=device, dtype=fdtype)
     disc = torch.pow(torch.tensor(float(discount), dtype=fdtype, device=device), k)
 
-    # CUMULATIVE survival under the per-planet hazard.
+    # CUMULATIVE survival under the per-planet hazard (my planets flipping away).
     keep = 1.0 - leak * is_mine                                 # [C, P, H+1]
     surv = torch.cumprod(keep.clamp(0.0, 1.0), dim=2)          # [C, P, H+1]
 
+    # Opponent EXPANSION onto neutrals: a reachable neutral I leave unclaimed is
+    # progressively taken by the opponent (same routable-mass hazard). Without
+    # this term, doing nothing is costless (neutrals stay neutral, P_opp=0) and
+    # the agent idles — the observed passivity. With it, NOT grabbing a contested
+    # neutral cedes it to the opponent (P_opp rises), creating the opportunity
+    # cost that drives continued expansion. (Capturing it removes the term: the
+    # planet is then `is_mine`, not `is_neutral`, in this candidate's trajectory.)
+    if model_opp_expansion:
+        keep_n = 1.0 - leak * is_neutral                       # [C, P, H+1]
+        surv_n = torch.cumprod(keep_n.clamp(0.0, 1.0), dim=2)
+        p_opp_neutral = is_neutral * (1.0 - surv_n)
+    else:
+        p_opp_neutral = torch.zeros_like(is_neutral)
+
     if not concentrate:
         p_mine = is_mine * surv
-        p_opp = is_opp + is_mine * (1.0 - surv)
+        p_opp = is_opp + is_mine * (1.0 - surv) + p_opp_neutral
         margin = (p_mine - p_opp) * prod.view(1, P, 1)
         return (margin.sum(dim=1) * disc.view(1, H1)).sum(dim=1)
 
@@ -212,7 +228,11 @@ def hazard_ownership_value(
     loss_pk = is_mine * (1.0 - surv) * prod.view(1, P, 1)        # [C, P, H+1]
     loss_p = (loss_pk * disc.view(1, 1, H1)).sum(dim=2)         # [C, P]
     worst = loss_p.max(dim=1).values                            # [C]
-    return det_margin - worst
+    # Ceded-neutral opportunity cost (opponent expansion), summed over all
+    # neutrals — passivity must cost margin here too, or concentrate idles.
+    neutral_cost = (p_opp_neutral * prod.view(1, P, 1)
+                    * disc.view(1, 1, H1)).sum(dim=(1, 2))       # [C]
+    return det_margin - worst - neutral_cost
 
 
 def score_candidates_native(
@@ -223,7 +243,7 @@ def score_candidates_native(
     owner: Tensor, valid: Tensor,
     cross_dist: Tensor, cur_ships: Tensor, is_enemy: Tensor,
     me: int, steepness: float = 5.0, discount: float = 1.0,
-    concentrate: bool = False,
+    concentrate: bool = False, model_opp_expansion: bool = True,
 ) -> Tensor:
     """End-to-end native value per candidate ``[C]`` (the Phase-A scorer)."""
     H = int(background_arrivals.shape[1])
@@ -235,7 +255,31 @@ def score_candidates_native(
     atk_reach = reachable_enemy_mass(
         cross_dist=cross_dist, ships=cur_ships, is_enemy=is_enemy, H=H,
     )
-    return hazard_ownership_value(
+    val = hazard_ownership_value(
         owner=owner_traj, ships=ships_traj, prod=prod, atk_reach=atk_reach,
         me=me, steepness=steepness, discount=discount, concentrate=concentrate,
+        model_opp_expansion=model_opp_expansion,
     )
+    # MARGINAL value: subtract the do-nothing baseline so the score is the
+    # improvement over inaction, not an absolute board value. The producer's
+    # chooser commits candidates whose score clears a (~0) roi floor; an absolute
+    # ownership value is dominated by a constant (every candidate cedes the same
+    # bulk of distant neutrals) and pushes everything below the floor -> idle.
+    # The delta cancels that constant: capturing a contested neutral / defending
+    # a threatened planet is a positive marginal gain, doing nothing is exactly 0.
+    P = int(init_owner.shape[0])
+    base_owner, base_ships = build_candidate_trajectories(
+        init_owner=init_owner, init_ships=init_ships, prod=prod,
+        alive_by_step=alive_by_step, background_arrivals=background_arrivals,
+        src=torch.full((1, 1), -1, dtype=torch.long),
+        tgt=torch.full((1, 1), -1, dtype=torch.long),
+        ships=torch.zeros(1, 1), eta=torch.ones(1, 1),
+        owner=torch.zeros(1, 1, dtype=torch.long),
+        valid=torch.zeros(1, 1, dtype=torch.bool),
+    )
+    base_val = hazard_ownership_value(
+        owner=base_owner, ships=base_ships, prod=prod, atk_reach=atk_reach,
+        me=me, steepness=steepness, discount=discount, concentrate=concentrate,
+        model_opp_expansion=model_opp_expansion,
+    )
+    return val - base_val

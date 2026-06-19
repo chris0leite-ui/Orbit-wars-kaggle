@@ -123,6 +123,34 @@ def test_holdable_capture_beats_thin_capture():
     assert val[1] > val[0]
 
 
+def test_opp_expansion_rewards_grabbing_contested_neutral():
+    """With opponent-expansion modeling, capturing a neutral the opponent can
+    reach out-scores leaving it (which cedes it to the opponent). Without the
+    term, doing nothing is costless and the passivity returns."""
+    init_owner, init_ships, prod, alive, background, cross = _board()
+    me = 0
+    # cand A: capture the contested neutral p1; cand B: no-op (launch nothing).
+    src = torch.tensor([[0], [-1]])
+    tgt = torch.tensor([[1], [-1]])
+    ships = torch.tensor([[60.0], [0.0]])
+    eta = torch.tensor([[2.0], [1.0]])
+    owner = torch.tensor([[0], [0]])
+    valid = torch.tensor([[True], [False]])
+    common = dict(
+        init_owner=init_owner, init_ships=init_ships, prod=prod,
+        alive_by_step=alive, background_arrivals=background,
+        src=src, tgt=tgt, ships=ships, eta=eta, owner=owner, valid=valid,
+        cross_dist=cross, cur_ships=init_ships, is_enemy=(init_owner == 1), me=me,
+    )
+    with_exp = score_candidates_native(model_opp_expansion=True, **common)
+    # capturing (A) beats the no-op (B) once the opponent would take the neutral.
+    assert with_exp[0] > with_exp[1]
+    # without the term the no-op is not penalised for ceding the neutral, so the
+    # gap shrinks (the expansion incentive is what the term adds).
+    without = score_candidates_native(model_opp_expansion=False, **common)
+    assert (with_exp[0] - with_exp[1]) > (without[0] - without[1])
+
+
 def test_no_threat_means_full_survival():
     """A planet I own with ZERO reachable enemy mass must keep ownership
     probability 1 over the whole horizon (no spurious hazard haircut), and the
