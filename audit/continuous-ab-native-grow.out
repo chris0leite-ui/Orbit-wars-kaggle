@@ -197,3 +197,25 @@
   [196/200] native_grow10 seed=5038 seat=0  loss  margin=-1.000  steps=119 max_ms=489.1  (eta 40s)
   [197/200] native_grow   seed=5039 seat=1  loss  margin=-1.000  steps=143 max_ms=319.4  (eta 30s)
   [198/200] native_grow25 seed=5039 seat=1  loss  margin=-1.000  steps=169 max_ms=368.2  (eta 20s)
+  [199/200] native_grow10 seed=5039 seat=1  loss  margin=-1.000  steps=103 max_ms=382.2  (eta 10s)
+  [200/200] native        seed=5039 seat=1  WIN   margin=+1.000  steps=348 max_ms=443.6  (eta 0s)
+# run done in 2031s -> audit/continuous-ab-native-grow-n40.jsonl
+(pairing reference = 'base')
+
+============================================================================================
+CONTINUOUS-SCORE A/B  (margin = (focal_ships - rival_ships)/(focal_ships + rival_ships) in [-1,1]; sign = win)
+vs Producer V2
+============================================================================================
+variant            n | wins (Wilson lo-hi) | mean margin [95% CI]   | paired vs base  Δmargin   
+--------------------------------------------------------------------------------------------
+native_grow25     40 |  13/40  (0.20-0.48) | -0.350 [-0.644,-0.056]  | -0.401 [-0.803,+0.047] n=40 up/dn=6/16 p=0.05
+native            40 |  13/40  (0.20-0.48) | -0.350 [-0.644,-0.056]  | -0.401 [-0.801,-0.001] n=40 up/dn=6/15 p=0.08
+native_grow       40 |  11/40  (0.16-0.43) | -0.450 [-0.730,-0.170]  | -0.501 [-0.853,-0.147] n=40 up/dn=4/15 p=0.02  *
+base              40 |  21/40  (0.37-0.67) | +0.051 [-0.261,+0.364]  | (reference)
+native_grow10     40 |   5/40  (0.05-0.26) | -0.750 [-0.958,-0.542]  | -0.801 [-1.152,-0.404] n=40 up/dn=2/20 p=0.00  *
+
+Reading the paired column:
+  Δmargin>0 = variant dominates base on the same maps; [lo,hi] is the
+  bootstrap 95%% CI on the mean per-map margin shift; up/dn = maps the
+  variant beat / lost to base on margin; '*' = CI excludes 0 (real).
+  Win-rate Wilson CI is the OLD coarse signal, shown for continuity.

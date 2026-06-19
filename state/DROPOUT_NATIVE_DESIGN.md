@@ -159,6 +159,27 @@ V2's 5 planets / prod 11. **Next lever = force concentration / coalitions**
 (PRODUCER_PLUS_FORCE_CONCENTRATION / SYNC / COALITIONS) to take defended
 high-value neutrals, NOT tuning.
 
+**Anticipatory threat growth (grow enemy reservoir by opp production over the
+horizon) — REFUTED on aggregate.** Diagnosis (traced 5 losses): consistent
+mid-game frontier collapse (t60-80) — P0 reaches mid-game even/ahead then loses
+held planets to V2's production-grown army (reactive threat model is blind to it).
+Fix gated `PRODUCER_PLUS_NATIVE_THREAT_GROWTH` (alpha). A/B n=40, paired vs native:
+alpha=0.25 Δ=+0.000 [-0.30,+0.30] up/dn 5/5 p=1.00 (EXACT parity); alpha=0.5
+Δ=-0.10 (worse); alpha=1.0 Δ=-0.40 p=0.04 (significantly worse, launches 218->180
+= over-suppression). It fixed the target map (seed 5032 loss->win) but globally
+over-defends maps whose frontier wasn't actually doomed, canceling the gains.
+
+### FOUR closing-levers all failed to beat native 13/40 (gap to base 21/40 open):
+1. wide neutral shortlist — no change (not a generation gap).
+2. lambda (production credit) sweep — native lambda=12 optimal; higher HURT.
+3. force concentration — worse (6/31 partial; over-concentrates).
+4. anticipatory threat growth — parity at best, worse as alpha rises.
+**The ship-margin value reformulation (0/40 -> 13/40) was the real, durable win.**
+native one-ply hazard plateaus ~8 wins below the mature bolt-on; the remaining gap
+likely needs structure the producer's tuned scorer already has (multi-ply
+sequencing, calibrated coalition/sync), not another single knob. Recommend banking
+native at 13/40 + the ship-margin finding and stopping the knob hunt.
+
 ## ⚠️ ALL RESULTS ABOVE THIS LINE ARE VOID (code-review 2026-06-19)
 A code review found the native scorer threw a shape error on EVERY turn
 (`garrison_status.arrivals_by_owner` is `[P, H+1, A]`; the code derived `H` from
