@@ -112,6 +112,32 @@ from lib.fast_sim import from_obs, clone, step
 from lib.opp_model import lite_greedy_policy
 from lib.value_heads import inflight_value
 
+# Optional V2 opponent model for the search (selected by LR_DEEP_OPP=2). V2 is
+# pure-Python (lib.* only), stateless, and its agent(obs) already returns the
+# [[src, angle, ships], ...] move format step() consumes -- no conversion needed.
+# Resolved in two layouts like the producer above: in-repo dev (sibling
+# ../v2/main.py) and a flat submission tar (v2_main.py next to this file).
+_V2_OK = False
+try:
+    try:
+        _V2_THIS = os.path.dirname(os.path.abspath(__file__))
+    except NameError:               # kaggle execs agents without __file__
+        _V2_THIS = (sys.path[-1] if sys.path
+                    and os.path.isfile(os.path.join(sys.path[-1], "main.py"))
+                    else os.getcwd())
+    _v2_dev = os.path.abspath(os.path.join(_V2_THIS, "..", "v2", "main.py"))
+    _v2_flat = os.path.join(_V2_THIS, "v2_main.py")
+    _v2_path = _v2_dev if os.path.isfile(_v2_dev) else _v2_flat
+    import importlib.util as _ilu2
+    _v2_spec = _ilu2.spec_from_file_location("_lr_v2_main", _v2_path)
+    _v2_mod = _ilu2.module_from_spec(_v2_spec)
+    sys.modules["_lr_v2_main"] = _v2_mod
+    _v2_spec.loader.exec_module(_v2_mod)
+    _v2_agent = _v2_mod.agent
+    _V2_OK = True
+except Exception:
+    _V2_OK = False
+
 
 # --------------------------------------------------------------------------
 # Compute bounds (NOT strategy weights).
@@ -230,7 +256,9 @@ def _deep_opp():
     """Per-node opponent model for the search rollouts (_twoply_pick/_deep_pick).
     0 = producer mirror (accurate, ~10-50ms/call -- the per-node bottleneck);
     1 = lite_greedy (cheap, ~1-2ms, still models expansion) so deeper search
-    fits the 1000ms wall. Default 0 keeps current behaviour byte-identical."""
+    fits the 1000ms wall; 2 = V2, the actual benchmark opponent (pure-Python,
+    stateless) -- models the policy we are scored against directly. Default 0
+    keeps current behaviour byte-identical."""
     return _i("LR_DEEP_OPP", 0)
 
 
@@ -357,6 +385,8 @@ def _opponent_move_fn(tier=None):
         tier = _deep_opp()
     if int(tier) == 1:
         return lambda obs_any, seat: lite_greedy_policy(obs_any)
+    if int(tier) == 2 and _V2_OK:
+        return _v2_move_obs
     return _producer_move_obs
 
 
@@ -525,6 +555,17 @@ def _producer_move_obs(obs_any, seat):
         with _torch.no_grad():
             row = runtime.tensor_action(ot)
         return _sparse_action_row_to_moves(row, obs_any, player_id=int(seat))
+    except Exception:
+        return []
+
+
+def _v2_move_obs(obs_any, seat):
+    """V2's launches for `seat` -- the actual benchmark opponent used as the
+    search's per-node opponent model (LR_DEEP_OPP=2). V2 is stateless and reads
+    its seat from obs.player (like lite_greedy), so `seat` is unused. agent(obs)
+    already returns the [[src, angle, ships], ...] format step() consumes."""
+    try:
+        return _v2_agent(obs_any)
     except Exception:
         return []
 
