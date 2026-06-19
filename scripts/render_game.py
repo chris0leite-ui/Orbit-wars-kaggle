@@ -1,12 +1,17 @@
-"""Render one orbit_wars game to a self-contained HTML replay you can open in a
-browser. Sets agent env-vars BEFORE loading the agents so gated knobs apply.
+"""Render one orbit_wars game (2P or 4P) to a self-contained HTML replay you can
+open in a browser. Sets agent env-vars BEFORE loading the agents so gated knobs
+apply (e.g. LR_WIN_LEAF=1).
 
 Usage:
-    python scripts/render_game.py --seed 6000 --p0 lr --p1 v2 --out /tmp/game.html
-    LR_WIN_LEAF=1 python scripts/render_game.py ...
+    # 2P
+    python scripts/render_game.py --seed 6001 \
+        --agents agents/least_resistance/main.py,agents/v2/main.py --out /tmp/g.html
+    # 4P (focal vs three V2)
+    LR_WIN_LEAF=1 python scripts/render_game.py --seed 7 \
+        --agents agents/least_resistance/main.py,agents/v2/main.py,agents/v2/main.py,agents/v2/main.py \
+        --out /tmp/g4.html
 """
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -20,25 +25,31 @@ from fast import resolve_agent_spec, _load_callable  # noqa: E402
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=6000)
-    ap.add_argument("--p0", default="lr")
-    ap.add_argument("--p1", default="v2")
+    ap.add_argument("--agents", required=True,
+                    help="comma-separated agent specs/paths; 2 -> 2P, 4 -> 4P")
     ap.add_argument("--out", default="/tmp/game.html")
     args = ap.parse_args()
 
     from kaggle_environments import make
 
-    _, p0_path = resolve_agent_spec(args.p0)
-    _, p1_path = resolve_agent_spec(args.p1)
-    p0 = _load_callable(p0_path)
-    p1 = _load_callable(p1_path)
+    specs = [s.strip() for s in args.agents.split(",") if s.strip()]
+    names, callables = [], []
+    for s in specs:
+        try:
+            name, path = resolve_agent_spec(s)
+        except FileNotFoundError:
+            name, path = Path(s).stem, s
+        names.append(name)
+        callables.append(_load_callable(path))
 
     env = make("orbit_wars", configuration={"seed": args.seed}, debug=True)
-    env.run([p0, p1])
+    env.run(callables)
     final = env.steps[-1]
-    r0, r1 = final[0].reward, final[1].reward
-    winner = "P0" if (r0 or 0) > (r1 or 0) else ("P1" if (r1 or 0) > (r0 or 0) else "draw")
-    print(f"seed={args.seed}  {args.p0}(P0) vs {args.p1}(P1)  "
-          f"steps={len(env.steps)}  rewards=({r0},{r1})  winner={winner}")
+    rewards = [final[i].reward for i in range(len(callables))]
+    best = max((r if r is not None else -1e9) for r in rewards)
+    winners = [f"P{i}({names[i]})" for i, r in enumerate(rewards) if r == best]
+    print(f"seed={args.seed}  {len(callables)}P  agents={names}  "
+          f"steps={len(env.steps)}  rewards={rewards}  winner={winners}")
 
     html = env.render(mode="html", width=900, height=700)
     Path(args.out).write_text(html, encoding="utf-8")
