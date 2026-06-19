@@ -272,6 +272,29 @@ def _hold_search_range():
     return _f("LR_HOLD_SEARCH_RANGE", 55.0)
 
 
+def _hold_search_levels():
+    """Hold-variant strengths (multiples of the detected incoming threat) offered
+    to the rollout for a contested planet. Default (1.25, 1.75) -- gentler than the
+    original (1.5, 2.5) so the menu cannot propose an over-commit that drains the
+    rest of the position. Override via LR_HOLD_SEARCH_LEVELS (comma-separated)."""
+    raw = os.environ.get("LR_HOLD_SEARCH_LEVELS", "")
+    if raw.strip():
+        try:
+            vals = tuple(float(x) for x in raw.split(",") if x.strip())
+            if vals:
+                return vals
+        except ValueError:
+            pass
+    return (1.25, 1.75)
+
+
+def _hold_donor_keep():
+    """Fraction of its own garrison each donor must RETAIN when feeding a
+    hold-search reinforcement (default 0.5). Caps the drain so a stronger-hold
+    variant can never strip a donor bare -- the over-hold catastrophic tail."""
+    return _f("LR_HOLD_DONOR_KEEP", 0.5)
+
+
 def _dropout():
     """Dropout-risk rollout penalty (default 0 = OFF, byte-identical). When ON,
     each candidate plan's leaf value is docked a MARGINAL penalty for the exposure
@@ -691,9 +714,13 @@ def _reinforce_emit(target, total, avail, my_planets, comet_ids, comet_paths, om
         (p for p in my_planets
          if int(p.id) != int(target.id) and avail.get(int(p.id), 0) > 0),
         key=lambda p: dist(txy, (float(p.x), float(p.y))))
+    keep = _hold_donor_keep()
     emit, acc = [], 0
     for d in donors:
-        take = min(int(avail.get(int(d.id), 0)), int(total) - acc)
+        # leave each donor at least `keep` of its own garrison -- a hold variant
+        # must never strip a donor bare (the over-hold drain that lost the war).
+        spare = int(avail.get(int(d.id), 0)) - int(math.ceil(keep * float(d.ships)))
+        take = min(max(0, spare), int(total) - acc)
         if take <= 0:
             continue
         shot = _plan_shot(d, target, comet_ids, comet_paths, omega, take)
@@ -711,7 +738,7 @@ def _reinforce_emit(target, total, avail, my_planets, comet_ids, comet_paths, om
 
 def _hold_search_plans(committed_emit, avail, my_planets, fleets, me,
                        comet_ids, comet_paths, omega,
-                       max_targets=2, levels=(1.5, 2.5)):
+                       max_targets=2, levels=None):
     """Stronger-hold whole-turn plan variants for the rollout menu. For the most
     valuable CONTESTED held planets (incoming enemy mass exceeds our garrison),
     propose plans that pour extra ships into them at a couple of strengths, ON TOP
@@ -719,6 +746,8 @@ def _hold_search_plans(committed_emit, avail, my_planets, fleets, me,
     each against the opponent model and keeps one only if it actually survives the
     retake -- so the hold LEVEL is chosen by simulation, and over-stripping a donor
     is self-punished (the donor falls in the rollout -> lower leaf value)."""
+    if levels is None:
+        levels = _hold_search_levels()
     enemy_fleets = [f for f in fleets
                     if int(f.owner) != int(me) and int(f.owner) != -1]
     if not enemy_fleets or not my_planets:
