@@ -1,0 +1,2 @@
+# continuous-ab  2026-06-19T05:35:11.158320+00:00  | 2P vs slawekbiel_the-producer-v2 | seeds 5000..5039 (n=40) | variants=base,native | 80 games to run (0 already done)
+{"seed": 5001, "seat": 1, "players": 2, "win": false, "margin": -1.0, "focal_ships": 0.0, "rival_ships": 3216.0, "scores": [3216.0, 0.0], "steps": 145, "max_ms": 58.7, "focal_launches": 315, "opp_launches": 296, "reward": -1, "idle": false, "variant": "base"}

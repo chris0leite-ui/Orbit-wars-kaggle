@@ -1,0 +1,2 @@
+# continuous-ab  2026-06-19T05:35:11.158320+00:00  | 2P vs slawekbiel_the-producer-v2 | seeds 5000..5039 (n=40) | variants=base,native | 80 games to run (0 already done)
+  [  1/ 80] base          seed=5001 seat=1  loss  margin=-1.000  steps=145 max_ms=58.7  (eta 1398s)
