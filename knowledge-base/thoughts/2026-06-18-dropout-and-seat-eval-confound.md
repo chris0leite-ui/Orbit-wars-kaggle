@@ -74,9 +74,76 @@ gets traction — but that's a new agent. Fork for next session: ship the cheap
 replacement vs commit to the ensemble-rollout rebuild. Don't keep refining the
 bolt-on. Full detail: state/DROPOUT_PLAN.md.
 
+## SEARCH DEPTH converts compute->strength (the session's first real lift)
+Built `scripts/eval_panel.py` (panel/margin/fresh-process harness). Compute-
+scaling curve, least_resistance vs V2, 28 maps (one game/seed, P0):
+- depth0 (2-ply): 14/28, margin -379, max 641ms
+- depth2:         13/28, margin -217, max 658ms
+- depth3:         17/28, margin  -56, max 818ms   <- best, beats producer/dropout 15
+- depth2+wide48:  13/28, margin -203 (IDENTICAL W/L to depth2 -> breadth is a NO-OP)
+
+MARGIN improves MONOTONICALLY with depth (-379 -> -217 -> -56). Win-rate noisy
+(14/13/17) but depth3 clearly best. So `LR_ROLLOUT_DEPTH=3` is the first config
+all session to beat the ~15/28 wall, using more of the 1000ms budget. Breadth
+(LR_MAX_CANDIDATES) does nothing (<28 sensible candidates typically).
+Caveat: n=28, depth3 wlo=0.42 -> triage, not yet a confident lift (Rule 45 wants
+n>=32 wlo>=0.5). And LR searches a PRODUCER opponent model while playing V2, so
+this lift is despite model-mismatch (encouraging; the accurate-model curve vs
+producer/self-play should be even cleaner).
+
+## depth-4 (#2): margin curve crosses zero; depth is wall-limited at ~3-4
+Timing gate: depth4 UNCAPPED breaches the wall (max 1189ms 2P / 1035ms 4P).
+Capped (LR_WALLCLOCK_MS=650, no overage bank) it FITS: max 925ms (2P) / 871 (4P).
+Capped depth4 vs V2, 28 maps: 16/28 (wlo 0.39), margin +20, max 925ms.
+Full margin curve (monotone in depth): d0 -379, d2 -217, d3 -56, d4 +20.
+- MARGIN improves monotonically with depth and crosses zero at depth4 (LR now
+  avg AHEAD of V2 in final position) — clean compute->strength.
+- WIN-RATE plateaus ~16-17/28 (d3=17, d4=16, tied within noise).
+- depth4 is AT the timing wall (925ms capped). depth5+ infeasible without a
+  CHEAPER per-node leaf. So depth ~3-4 is the operating ceiling, set by the
+  1000ms wall, not by the idea. Next lever = faster/ensemble leaf eval (afford
+  more depth), or confirm depth3 at n>=32 and ship.
+
+## Cheap-opponent kill-gate: REFUTED (depth needs an ACCURATE opponent model)
+Shipped depth-3 mirror LR (sub 53836276). Then Phase 1 = swap the per-node
+producer mirror for cheap lite_greedy (LR_DEEP_OPP knob; ~6x cheaper: depth4
+p50 453->71ms, so depth 6-8 fits the wall). Kill-gate vs V2, 28 maps:
+- lite_greedy d3 7/28 (margin -1778), d4 9 (-964), d6 8 (-1577), d8 9 (-1060)
+- mirror d3 17/28 (-56)  [reference]
+lite_greedy is FAR worse at every depth, and depth doesn't recover it. Lesson:
+**searching deep against a weak/wrong opponent model is actively harmful** (you
+optimize against a phantom; V2 is a producer variant so the mirror generalizes,
+lite_greedy doesn't). Depth pays ONLY with an accurate opponent model.
+=> Phase 1 REFUTED; keep LR_DEEP_OPP=0 (mirror) default (shipped depth3 unaffected).
+=> Phase 2 (contagion) now in DOUBT (also a cheap approximate opponent) -- it's a
+   better approximation than lite_greedy but must rival the mirror's accuracy.
+=> REDIRECT: don't REPLACE the accurate mirror, CACHE it -- iterative deepening +
+   cross-turn tree reuse keep accuracy while cutting recompute. That's the right
+   way to afford depth 5+. (The knob/seam from Phase 1 stays as default-OFF infra.)
+
+## TIMING-DETERMINISM + idle-timeout failure mode (PI replay observation)
+PI watched a depth3 render: blue winning, then "stops doing anything" ~step 114,
+loses (315-turn drag). Diagnosed:
+- The deep search is WALL-CLOCK timeboxed -> timing-sensitive / non-deterministic.
+  Under CPU CONTENTION (I rendered while the A/B ran), turns ballooned >1s,
+  drained the env overage bank, and kaggle_environments BENCHED the agent
+  (timeout -> inactive -> forced idle from ~114) -> lost a won game.
+- CLEAN (no contention): same seed5001 depth3 WINS, 137 turns, ACTIVE throughout,
+  max 726ms, 0 timeouts. So the idle was a contention artifact, NOT a logic bug.
+Two hard rules now:
+- RUN COMPUTE ONE JOB AT A TIME. Concurrent jobs starve the timebox -> garbage
+  results (3759ms turns seen) AND can bench the agent mid-game. (Bit us twice.)
+- SHIPPING RISK: timeboxed deep search + slow/loaded ladder hardware can breach
+  1000ms -> overage-bank drain -> idle -> thrown game. Shipped depth3 runs
+  ~730-870ms clean = THIN margin. Watch the depth3 ladder read for stalls
+  (score stuck ~600 = timing out; climbing past ~1000 = fine). Mitigation if it
+  stalls: lower the wallclock budget / cap depth harder for guaranteed headroom.
+
 ## Open questions / next
-- Decide the fork (ship cheap replacement vs ensemble-rollout rebuild).
-- Phase 1b calibration only matters under the native design.
+- Confirm shipped depth3-mirror at n>=32 + panel + 4P (run ALONE).
+- A1 iterative deepening: clean A/B (id_cap8 vs fixed_d3) -- prelim contaminated
+  read was 18/28 margin +332 (vs fixed-d3 17/28 -56), re-running clean.
+- Caching the mirror (memo / cross-turn) to afford depth without losing accuracy.
 
 ## Flags
 - The seat/`step` fix is default-ON but byte-identical when `step` is present;
