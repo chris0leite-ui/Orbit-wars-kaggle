@@ -127,6 +127,12 @@ VARIANT_SETS = {
                                 if k != "PRODUCER_PLUS_DROPOUT"},
                                PRODUCER_PLUS_NATIVE_HAZARD=1,
                                PRODUCER_PLUS_NATIVE_STEEPNESS=3),
+            # force concentration: multiple coordinated waves per target, to crack
+            # defended high-value (corner) neutrals a single source can't take.
+            "native_fc":    _v({k: v for k, v in _DROP_BASE.items()
+                                if k != "PRODUCER_PLUS_DROPOUT"},
+                               PRODUCER_PLUS_NATIVE_HAZARD=1,
+                               PRODUCER_PLUS_FORCE_CONCENTRATION=1),
             # Bracket the hazard steepness to test whether the flip-hazard term
             # is load-bearing at all (s0.5 ~ flat hazard ~ pure ownership margin;
             # s20 ~ hard contest). If all three ~equal, the hazard is inert and
