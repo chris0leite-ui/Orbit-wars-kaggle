@@ -93,3 +93,88 @@
   [ 92/160] base          seed=5023 seat=1  loss  margin=-1.000  steps=145 max_ms=69.3  (eta 556s)
   [ 93/160] native_sc     seed=5022 seat=0  loss  margin=-1.000  steps=100 max_ms=431.7  (eta 543s)
   [ 94/160] base          seed=5024 seat=0  WIN   margin=+1.000  steps=166 max_ms=261.7  (eta 543s)
+  [ 95/160] native        seed=5023 seat=1  loss  margin=-1.000  steps=177 max_ms=321.5  (eta 540s)
+  [ 96/160] native_s20    seed=5023 seat=1  loss  margin=-1.000  steps=172 max_ms=274.2  (eta 528s)
+  [ 97/160] native        seed=5024 seat=0  loss  margin=-1.000  steps=96 max_ms=258.5  (eta 520s)
+  [ 98/160] native_sc     seed=5023 seat=1  loss  margin=-1.000  steps=190 max_ms=324.0  (eta 509s)
+  [ 99/160] native_s20    seed=5024 seat=0  loss  margin=-1.000  steps=96 max_ms=279.3  (eta 504s)
+  [100/160] native_sc     seed=5024 seat=0  loss  margin=-1.000  steps=96 max_ms=210.4  (eta 492s)
+  [101/160] base          seed=5025 seat=1  WIN   margin=+1.000  steps=236 max_ms=269.9  (eta 482s)
+  [102/160] native        seed=5025 seat=1  loss  margin=-1.000  steps=102 max_ms=209.5  (eta 473s)
+  [103/160] base          seed=5026 seat=0  loss  margin=-1.000  steps=174 max_ms=56.9  (eta 467s)
+  [104/160] native_sc     seed=5025 seat=1  loss  margin=-1.000  steps=102 max_ms=198.2  (eta 456s)
+  [105/160] native_s20    seed=5025 seat=1  loss  margin=-1.000  steps=102 max_ms=228.4  (eta 444s)
+  [106/160] native        seed=5026 seat=0  loss  margin=-1.000  steps=83 max_ms=206.9  (eta 436s)
+  [107/160] base          seed=5027 seat=1  loss  margin=-1.000  steps=149 max_ms=55.2  (eta 429s)
+  [108/160] native_s20    seed=5026 seat=0  loss  margin=-1.000  steps=83 max_ms=219.4  (eta 418s)
+  [109/160] native_sc     seed=5026 seat=0  loss  margin=-1.000  steps=83 max_ms=219.3  (eta 407s)
+  [110/160] native        seed=5027 seat=1  loss  margin=-1.000  steps=112 max_ms=196.8  (eta 402s)
+  [111/160] base          seed=5028 seat=0  loss  margin=-1.000  steps=142 max_ms=63.7  (eta 392s)
+  [112/160] native_s20    seed=5027 seat=1  loss  margin=-1.000  steps=112 max_ms=210.5  (eta 384s)
+  [113/160] native_sc     seed=5027 seat=1  loss  margin=-1.000  steps=112 max_ms=204.5  (eta 373s)
+  [114/160] native        seed=5028 seat=0  loss  margin=-1.000  steps=100 max_ms=210.8  (eta 368s)
+  [115/160] native_s20    seed=5028 seat=0  loss  margin=-1.000  steps=100 max_ms=213.0  (eta 358s)
+  [116/160] base          seed=5029 seat=1  loss  margin=-1.000  steps=195 max_ms=317.0  (eta 348s)
+  [117/160] native_sc     seed=5028 seat=0  loss  margin=-1.000  steps=100 max_ms=197.9  (eta 339s)
+  [118/160] base          seed=5030 seat=0  WIN   margin=+1.000  steps=113 max_ms=61.3  (eta 333s)
+  [119/160] native        seed=5029 seat=1  loss  margin=-1.000  steps=117 max_ms=191.1  (eta 325s)
+  [120/160] native_s20    seed=5029 seat=1  loss  margin=-1.000  steps=117 max_ms=198.1  (eta 315s)
+  [121/160] native_sc     seed=5029 seat=1  loss  margin=-1.000  steps=117 max_ms=248.1  (eta 306s)
+  [122/160] base          seed=5031 seat=1  WIN   margin=+1.000  steps=139 max_ms=51.7  (eta 301s)
+  [123/160] native        seed=5030 seat=0  loss  margin=-1.000  steps=115 max_ms=467.9  (eta 292s)
+  [124/160] native_s20    seed=5030 seat=0  loss  margin=-1.000  steps=104 max_ms=394.3  (eta 282s)
+  [125/160] native_sc     seed=5030 seat=0  loss  margin=-1.000  steps=106 max_ms=408.3  (eta 273s)
+  [126/160] base          seed=5032 seat=0  WIN   margin=+1.000  steps=146 max_ms=73.7  (eta 268s)
+  [127/160] native_sc     seed=5031 seat=1  loss  margin=-1.000  steps=109 max_ms=403.4  (eta 260s)
+  [128/160] native        seed=5031 seat=1  loss  margin=-1.000  steps=110 max_ms=257.4  (eta 250s)
+  [129/160] native_s20    seed=5031 seat=1  loss  margin=-1.000  steps=119 max_ms=466.7  (eta 242s)
+  [130/160] base          seed=5033 seat=1  loss  margin=-1.000  steps=144 max_ms=56.9  (eta 236s)
+  [131/160] native        seed=5032 seat=0  loss  margin=-1.000  steps=111 max_ms=207.5  (eta 227s)
+  [132/160] native_s20    seed=5032 seat=0  loss  margin=-1.000  steps=111 max_ms=212.8  (eta 219s)
+  [133/160] native_sc     seed=5032 seat=0  loss  margin=-1.000  steps=111 max_ms=226.0  (eta 210s)
+  [134/160] native_s20    seed=5033 seat=1  loss  margin=-1.000  steps=78 max_ms=235.7  (eta 203s)
+  [135/160] native        seed=5033 seat=1  loss  margin=-1.000  steps=78 max_ms=215.1  (eta 194s)
+  [136/160] base          seed=5034 seat=0  loss  margin=-1.000  steps=139 max_ms=244.4  (eta 185s)
+  [137/160] native_sc     seed=5033 seat=1  loss  margin=-1.000  steps=78 max_ms=178.0  (eta 177s)
+  [138/160] base          seed=5035 seat=1  loss  margin=-1.000  steps=148 max_ms=249.3  (eta 170s)
+  [139/160] native        seed=5034 seat=0  loss  margin=-1.000  steps=104 max_ms=209.7  (eta 162s)
+  [140/160] native_sc     seed=5034 seat=0  loss  margin=-1.000  steps=104 max_ms=207.1  (eta 154s)
+  [141/160] native_s20    seed=5034 seat=0  loss  margin=-1.000  steps=104 max_ms=246.8  (eta 145s)
+  [142/160] base          seed=5036 seat=0  WIN   margin=+1.000  steps=141 max_ms=51.8  (eta 139s)
+  [143/160] native        seed=5035 seat=1  loss  margin=-1.000  steps=112 max_ms=218.8  (eta 131s)
+  [144/160] native_s20    seed=5035 seat=1  loss  margin=-1.000  steps=112 max_ms=231.5  (eta 123s)
+  [145/160] native_sc     seed=5035 seat=1  loss  margin=-1.000  steps=112 max_ms=204.9  (eta 114s)
+  [146/160] base          seed=5037 seat=1  WIN   margin=+1.000  steps=136 max_ms=62.7  (eta 108s)
+  [147/160] native        seed=5036 seat=0  loss  margin=-1.000  steps=124 max_ms=448.7  (eta 100s)
+  [148/160] native_s20    seed=5036 seat=0  loss  margin=-1.000  steps=124 max_ms=412.6  (eta 92s)
+  [149/160] native_sc     seed=5036 seat=0  loss  margin=-1.000  steps=124 max_ms=414.3  (eta 84s)
+  [150/160] native        seed=5037 seat=1  loss  margin=-1.000  steps=115 max_ms=227.5  (eta 77s)
+  [151/160] native_s20    seed=5037 seat=1  loss  margin=-1.000  steps=115 max_ms=215.9  (eta 69s)
+  [152/160] native_sc     seed=5037 seat=1  loss  margin=-1.000  steps=115 max_ms=204.1  (eta 61s)
+  [153/160] base          seed=5038 seat=0  loss  margin=-0.963  steps=500 max_ms=294.2  (eta 54s)
+  [154/160] base          seed=5039 seat=1  WIN   margin=+1.000  steps=116 max_ms=248.5  (eta 47s)
+  [155/160] native        seed=5039 seat=1  loss  margin=-1.000  steps=108 max_ms=241.5  (eta 40s)
+  [156/160] native_s20    seed=5039 seat=1  loss  margin=-1.000  steps=142 max_ms=222.3  (eta 32s)
+  [157/160] native_s20    seed=5038 seat=0  loss  margin=-0.956  steps=500 max_ms=264.1  (eta 24s)
+  [158/160] native        seed=5038 seat=0  loss  margin=-0.956  steps=500 max_ms=238.2  (eta 16s)
+  [159/160] native_sc     seed=5038 seat=0  loss  margin=-0.956  steps=500 max_ms=234.4  (eta 8s)
+  [160/160] native_sc     seed=5039 seat=1  loss  margin=-1.000  steps=99 max_ms=200.6  (eta 0s)
+# run done in 1292s -> audit/continuous-ab-native-REAL-n40.jsonl
+(pairing reference = 'base')
+
+============================================================================================
+CONTINUOUS-SCORE A/B  (margin = (focal_ships - rival_ships)/(focal_ships + rival_ships) in [-1,1]; sign = win)
+vs Producer V2
+============================================================================================
+variant            n | wins (Wilson lo-hi) | mean margin [95% CI]   | paired vs base  Δmargin   
+--------------------------------------------------------------------------------------------
+base              40 |  21/40  (0.37-0.67) | +0.051 [-0.261,+0.364]  | (reference)
+native            40 |   0/40  (0.00-0.09) | -0.996 [-1.002,-0.991]  | -1.048 [-1.350,-0.746] up/dn=1/22 p=0.00  *
+native_s20        40 |   0/40  (0.00-0.09) | -0.996 [-1.002,-0.991]  | -1.048 [-1.350,-0.746] up/dn=1/22 p=0.00  *
+native_sc         40 |   0/40  (0.00-0.09) | -0.996 [-1.002,-0.991]  | -1.048 [-1.350,-0.746] up/dn=1/22 p=0.00  *
+
+Reading the paired column:
+  Δmargin>0 = variant dominates base on the same maps; [lo,hi] is the
+  bootstrap 95%% CI on the mean per-map margin shift; up/dn = maps the
+  variant beat / lost to base on margin; '*' = CI excludes 0 (real).
+  Win-rate Wilson CI is the OLD coarse signal, shown for continuity.

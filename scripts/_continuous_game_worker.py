@@ -162,6 +162,13 @@ def main() -> int:
     # engine reward cross-check + idle guard (a game where a side never launched
     # is degenerate; verify_confirm filters these).
     rewards = [s.reward for s in final]
+    # Our re-summed `win` must agree with the engine reward (reward==1 <=> win).
+    # If this ever fires, our score replication has drifted from the engine and
+    # the continuous margin is no longer a faithful relaxation of the outcome.
+    if rewards[seat] is not None:
+        assert win == (rewards[seat] == 1), (
+            "win/reward mismatch: win=%s reward=%s scores=%s"
+            % (win, rewards[seat], scores))
     focal_launches = sum(len(st[seat].action) for st in env.steps if st[seat].action)
     opp_launches = sum(len(st[i].action or []) for st in env.steps
                        for i in range(players) if i != seat)

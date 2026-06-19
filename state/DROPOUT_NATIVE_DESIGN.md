@@ -141,6 +141,35 @@ Kill-gate RE-RUN with the native scorer actually executing — REAL verdict belo
 scorer (19/40 vs 21/40), and the hazard distribution is provably inert ...~~
 (VOID — the model never executed.)
 
+## REAL VERDICT — Phase A kill-gate FAILED decisively (model now executes)
+With the native scorer actually running (n=40 paired vs V2):
+| variant | wins | mean margin | Δ vs base | median focal launches |
+|---|---|---|---|---|
+| base | 21/40 | +0.051 | — | 214 |
+| native | **0/40** | **−0.996** | −1.05 p=0.00 ✱ | **30** |
+| native_s20 | 0/40 | −0.996 | identical to native | — |
+| native_sc (self-consist) | 0/40 | −0.996 | identical to native | 32 |
+
+native loses ALL 40 maps, near-eliminated every game. steepness (5≡20) and
+self-consistency (concentrated adversary) change NOTHING — both 0/40 identical.
+ROOT CAUSE (mechanistic): the agent is **pathologically passive** — ~30 launches
+vs base's ~214. The forward model applies the flip hazard only to MY planets (it
+models the opponent ATTACKING me) but never models the opponent EXPANDING onto
+neutrals. So "do nothing" is costless in the value functional (neutrals stay
+neutral, P_opp=0), and any launch only debits a source to chase a
+hazard-discounted target → idleness dominates the ranking. The value functional
+is HALF an opponent model.
+
+This is the airtight refutation the PI asked for (self-consistency tried, 0/40).
+The Phase-A thesis — a mean-field flip-hazard overlay on a per-candidate
+deterministic trajectory, scoring the producer's shortlist — does not produce
+competitive play and cannot beat base. A working dropout-native agent would need
+the forward model to ALSO model opponent expansion (neutral capture) — i.e. a
+genuine two-sided distributional rollout (the v2 ensemble), not a one-sided
+hazard overlay. Given base is only parity-with-V2 (below the live champion), that
+rebuild is not justified. RECOMMENDATION stands: bank the eval harness + this
+(now real) negative result; stop the dropout line.
+
 What would be required to make the distribution load-bearing for RANKING (NOT
 funded without a fresh PI decision — these are big builds the doc gated behind a
 Phase A pass that did not happen):
