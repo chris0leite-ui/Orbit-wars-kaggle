@@ -61,6 +61,28 @@ fix forward AND add a test.
   **Open follow-up:** make `--vs-panel` mandatory before submission
   (workflow rule, not yet hard-gated in source).
 
+## 2026-06-19 (claude/kaggle-dropout-strategy-2hk9wr — six-lever refutation sweep)
+
+- `tag: remeasure-deterministic-baseline` — A/B session: re-ran the
+  byte-identical OFF baseline (`LR_*` unset → deterministic 20/32 +319)
+  inside three separate A/Bs before PI stopped me ("stop running the OFF
+  comparison again and again"). ~20 min × 3 of compute re-deriving a known
+  constant. **Fix:** measure ON-only and compare against the recorded
+  baseline; never re-run a deterministic config to "re-confirm" it.
+- `tag: single-point-promoted-to-principle` — opponent-model A/Bs: read one
+  2-point gap (producer-model 20/32 vs V2-model 13/32) as a directional
+  principle ("adversary *strength* disciplines plan selection") and
+  recommended a *stronger* adversary; the best-response result (13/32)
+  refuted it — it's a non-monotone calibration sweet-spot, not "stronger is
+  better". The recommendation cost a compute spend the PI acted on. **Fix:**
+  when one comparison admits ≥2 explanations, frame them as competing and
+  test the discriminating case before promoting to a principle or steering
+  action.
+- `tag: render-contention-pollutes-timing` — ran heavy HTML replay renders
+  concurrently with timing-sensitive A/Bs; CPU contention spiked the
+  `max_turn_ms` column (1422→3122→4054 ms) and needed repeated caveating.
+  **Fix:** never co-locate replay renders with a timing A/B on the same box.
+
 ## Newly-fired patterns (this session)
 
 - `tag: fix-not-validated-against-real-failing-state` — 2026-05-14

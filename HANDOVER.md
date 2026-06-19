@@ -1,5 +1,55 @@
 # HANDOVER.md — next-session brief
 
+> **Refreshed 2026-06-19 (six-lever refutation session).** Active agent =
+> **shipped `least_resistance`** (2-ply + simultaneous-producer opponent model
+> + margin leaf), **unchanged this session and confirmed a robust local optimum
+> vs Producer V2.** Read
+> `knowledge-base/thoughts/2026-06-19-six-refutations-goldilocks-opponent-model.md`
+> first, then the postmortem
+> `audit/2026-06-19-postmortem-kaggle-dropout-strategy-2hk9wr.md`. The
+> dropout / take-and-hold briefs below are retained for history.
+
+## ⚠️ Six-lever refutation session — state of play (2026-06-19)
+- **Goal:** push `least_resistance` past its local optimum vs Producer V2
+  (OFF baseline **20/32, margin +319, worst −3402**, n=32 seeds 6000–6031, 2P).
+- **Six mechanisms built default-OFF, smoked (bundle+parity+timing), A/B'd at
+  n=32 vs V2 — ALL SIX REFUTED:**
+  | lever | result vs V2 (n=32) |
+  |---|---|
+  | dropout (prior) | refuted earlier |
+  | hold-search (tuned) | 19/32, −142 |
+  | win-equity leaf (`(ours−theirs)/(ours+theirs)`) | 19/32, +278 |
+  | robust multi-reply (worst-case over {producer, lite_greedy}) | 17/32, −286 |
+  | V2 as the search opponent (`LR_DEEP_OPP=2`) | 13/32, −802 |
+  | best-response adversary (`LR_BEST_RESPONSE`) | 13/32, −959 |
+- **The finding — a calibrated "Goldilocks" opponent model.** The three
+  opponent-model points are **non-monotone**: too-weak (real sparse V2) 13/32
+  ↔ calibrated (simultaneous producer = denser than reality) **20/32** ↔
+  too-tough (best-responding/clairvoyant) 13/32. Both extremes regress to ~13
+  from opposite failure modes (complacency vs paralysis). **The shipped agent
+  already sits on the sweet-spot.** Lever is NOT "model the true opponent" and
+  NOT "model the strongest adversary" — it's calibration.
+- **Code state:** all six knobs remain in `agents/least_resistance/main.py`,
+  **default-OFF**, OFF path byte-identical — kept as a mapped refuted-lever
+  neighborhood. Committed + pushed (HEAD `e4ad8d5`, branch ahead 11). **No
+  submission this session** (none cleared the 20/32 ship gate).
+- **Side fixes:** bundler drift — `lib.kinematic_table` was missing from the
+  inliner's `DEFAULT_LIB_ORDER` (trajectory.py lazy-imports it); `test_bundle.py`
+  now 11 passed. New tool `scripts/render_game.py` (one game → HTML replay, 2P/4P).
+
+## ⚠️ Open questions / FIRST THING NEXT SESSION
+1. **A move off this optimum needs a different FRAME, not another bolt-on.**
+   All six refuted levers stayed inside 2-ply + producer-eval. Candidates:
+   deeper search that actually pays for itself, a learned/value-head leaf, or a
+   genuinely different candidate-plan *generator* — not leaf reweighting or
+   opponent swaps. Don't re-test the six refuted knobs without a new reason.
+2. **4P is unmeasured** for all six (only 2P A/B'd). If 4P ever becomes the
+   lever, the win-leaf 4P caveat stands: by default it scores
+   share-vs-field-sum, which is NOT the 4P win condition — set
+   `LR_LEADER_RELATIVE_4P=1` (share/margin vs the single strongest rival) first.
+
+---
+
 > **Refreshed 2026-06-18 (smart-dropout session).** Active line =
 > **smart dropout on `agents/producer_plus`**. Read `state/DROPOUT_PLAN.md`
 > first (the executable roadmap), then
