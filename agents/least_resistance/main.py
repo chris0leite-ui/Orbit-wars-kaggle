@@ -272,6 +272,29 @@ def _hold_search_range():
     return _f("LR_HOLD_SEARCH_RANGE", 55.0)
 
 
+def _dropout():
+    """Dropout-risk leaf term (default 0 = OFF, byte-identical). When ON,
+    `_project_value` blends its clean horizon value with a PESSIMIST value in
+    which each planet WE hold at the horizon is contested toward the strongest
+    rival in proportion to the enemy mass that can REACH it vs our garrison there.
+    Over-aggression (a thin source after launching) and over-extension (a far
+    capture the rival can reach) lower the value on their own -- attack-selectivity
+    emerges, no hard force/timing rule. Mean-field, no RNG -> CPU/GPU bit-parity."""
+    return _i("LR_DROPOUT", 0) >= 1
+
+
+def _dropout_weight():
+    """Temper on the contest-ratio blend (default 0.5; mirrors producer_plus).
+    value = (1 - eff_w)*clean + eff_w*pessimist, eff_w = weight * position-contest."""
+    return _f("LR_DROPOUT_WEIGHT", 0.5)
+
+
+def _dropout_reach_pad():
+    """Slack (turns) on the reach test: a rival garrison can contest our planet
+    iff travel_turns <= H + pad. Default 0 (strict within-horizon)."""
+    return _f("LR_DROPOUT_REACH_PAD", 0.0)
+
+
 def _opponent_move_fn(tier=None):
     """Return a callable (obs, seat) -> [[src,angle,ships],...] for the per-node
     opponent move, matching _producer_move_obs' signature. lite_greedy reads the
@@ -480,7 +503,39 @@ def _project_value(obs_any, me):
                 theirs = tot
     else:
         theirs = float((ships * ((owner != int(me)) & (owner >= 0)).to(_torch.float32)).sum())
-    return mine - theirs
+    clean = mine - theirs
+    if not _dropout():
+        return clean
+    # --- mean-field dropout risk (default-OFF above) -----------------------
+    # Contest each planet we hold at the horizon toward the strongest rival, in
+    # proportion to the enemy mass that can REACH it vs our garrison there, then
+    # blend clean <-> pessimist. A stripped source garrison (after launching) or
+    # a far capture the rival can reach raises the contest and lowers value.
+    fdt = _torch.float32
+    mine_mask = (owner == int(me)).to(fdt)
+    rival, rival_tot = -1, 0.0
+    for pl in range(int(pc)):                          # deterministic first-max
+        if pl == int(me):
+            continue
+        tot = float((ships * (owner == pl).to(fdt)).sum())
+        if tot > rival_tot:
+            rival_tot, rival = tot, pl
+    if rival < 0 or rival_tot <= 0.0:
+        return clean                                   # no living rival -> no risk
+    enemy_src = ships * (owner == rival).to(fdt)       # [P] rival garrison mass
+    coords = _torch.stack((mv.x[int(H)].to(fdt), mv.y[int(H)].to(fdt)), dim=1)
+    dmat = _torch.cdist(coords, coords)                # [P,P] horizon distances
+    ref_speed = max(1e-6, float(fleet_speed(FRONTIER_REF_SHIPS)))
+    reach = (dmat / ref_speed) <= (float(int(H)) + _dropout_reach_pad())
+    reach_mass = (reach.to(fdt) * enemy_src.unsqueeze(0)).sum(dim=1)   # E_i [P]
+    eps = 1e-6
+    contest = reach_mass / (reach_mass + ships + eps)  # c_i in [0,1)
+    contested_ships = float((ships * mine_mask * contest).sum())
+    pessimist = clean - 2.0 * contested_ships          # ship leaves mine, joins rival
+    e_total = float((reach_mass * mine_mask).sum())
+    contest_pos = e_total / (e_total + mine + eps)     # mine == our held total
+    eff_w = min(1.0, max(0.0, _dropout_weight() * contest_pos))
+    return (1.0 - eff_w) * clean + eff_w * pessimist
 
 
 def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=None,
