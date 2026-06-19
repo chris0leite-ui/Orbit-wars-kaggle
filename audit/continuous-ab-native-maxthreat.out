@@ -43,3 +43,56 @@
   [ 42/ 80] native        seed=5020 seat=0  loss  margin=-1.000  steps=112 max_ms=323.7  (eta 342s)
   [ 43/ 80] base          seed=5021 seat=1  loss  margin=-1.000  steps=166 max_ms=75.1  (eta 327s)
   [ 44/ 80] base          seed=5022 seat=0  WIN   margin=+1.000  steps=142 max_ms=106.3  (eta 322s)
+  [ 45/ 80] base          seed=5023 seat=1  loss  margin=-1.000  steps=145 max_ms=66.7  (eta 309s)
+  [ 46/ 80] native        seed=5021 seat=1  loss  margin=-1.000  steps=136 max_ms=265.3  (eta 300s)
+  [ 47/ 80] native        seed=5022 seat=0  loss  margin=-1.000  steps=125 max_ms=280.5  (eta 291s)
+  [ 48/ 80] base          seed=5024 seat=0  WIN   margin=+1.000  steps=166 max_ms=252.0  (eta 277s)
+  [ 49/ 80] native        seed=5023 seat=1  WIN   margin=+1.000  steps=146 max_ms=229.2  (eta 275s)
+  [ 50/ 80] base          seed=5025 seat=1  WIN   margin=+1.000  steps=236 max_ms=310.0  (eta 263s)
+  [ 51/ 80] native        seed=5024 seat=0  loss  margin=-1.000  steps=115 max_ms=239.5  (eta 250s)
+  [ 52/ 80] base          seed=5026 seat=0  loss  margin=-1.000  steps=174 max_ms=46.8  (eta 244s)
+  [ 53/ 80] native        seed=5025 seat=1  loss  margin=-1.000  steps=145 max_ms=244.7  (eta 232s)
+  [ 54/ 80] base          seed=5027 seat=1  loss  margin=-1.000  steps=149 max_ms=51.7  (eta 220s)
+  [ 55/ 80] native        seed=5026 seat=0  loss  margin=-1.000  steps=102 max_ms=256.2  (eta 213s)
+  [ 56/ 80] base          seed=5028 seat=0  loss  margin=-1.000  steps=142 max_ms=54.9  (eta 202s)
+  [ 57/ 80] base          seed=5029 seat=1  loss  margin=-1.000  steps=195 max_ms=260.6  (eta 197s)
+  [ 58/ 80] native        seed=5028 seat=0  loss  margin=-1.000  steps=118 max_ms=228.1  (eta 186s)
+  [ 59/ 80] native        seed=5027 seat=1  WIN   margin=+1.000  steps=146 max_ms=247.9  (eta 176s)
+  [ 60/ 80] base          seed=5030 seat=0  WIN   margin=+1.000  steps=113 max_ms=57.9  (eta 168s)
+  [ 61/ 80] base          seed=5031 seat=1  WIN   margin=+1.000  steps=139 max_ms=65.6  (eta 160s)
+  [ 62/ 80] native        seed=5029 seat=1  loss  margin=-1.000  steps=196 max_ms=245.5  (eta 152s)
+  [ 63/ 80] native        seed=5030 seat=0  loss  margin=-1.000  steps=117 max_ms=434.2  (eta 142s)
+  [ 64/ 80] base          seed=5032 seat=0  WIN   margin=+1.000  steps=146 max_ms=93.7  (eta 133s)
+  [ 65/ 80] native        seed=5031 seat=1  loss  margin=-1.000  steps=127 max_ms=437.7  (eta 124s)
+  [ 66/ 80] base          seed=5033 seat=1  loss  margin=-1.000  steps=144 max_ms=72.9  (eta 115s)
+  [ 67/ 80] base          seed=5034 seat=0  loss  margin=-1.000  steps=139 max_ms=254.5  (eta 108s)
+  [ 68/ 80] native        seed=5034 seat=0  loss  margin=-1.000  steps=92 max_ms=246.7  (eta 101s)
+  [ 69/ 80] base          seed=5035 seat=1  loss  margin=-1.000  steps=148 max_ms=261.5  (eta 91s)
+  [ 70/ 80] native        seed=5033 seat=1  loss  margin=-1.000  steps=128 max_ms=272.6  (eta 82s)
+  [ 71/ 80] native        seed=5032 seat=0  loss  margin=-1.000  steps=196 max_ms=418.6  (eta 73s)
+  [ 72/ 80] base          seed=5036 seat=0  WIN   margin=+1.000  steps=141 max_ms=105.0  (eta 65s)
+  [ 73/ 80] base          seed=5037 seat=1  WIN   margin=+1.000  steps=136 max_ms=110.3  (eta 57s)
+  [ 74/ 80] native        seed=5035 seat=1  loss  margin=-1.000  steps=141 max_ms=484.9  (eta 50s)
+  [ 75/ 80] native        seed=5036 seat=0  WIN   margin=+1.000  steps=160 max_ms=526.7  (eta 42s)
+  [ 76/ 80] native        seed=5037 seat=1  loss  margin=-1.000  steps=118 max_ms=518.4  (eta 33s)
+  [ 77/ 80] base          seed=5039 seat=1  WIN   margin=+1.000  steps=116 max_ms=332.1  (eta 25s)
+  [ 78/ 80] base          seed=5038 seat=0  loss  margin=-0.963  steps=500 max_ms=319.6  (eta 17s)
+  [ 79/ 80] native        seed=5038 seat=0  loss  margin=-1.000  steps=113 max_ms=461.5  (eta 8s)
+  [ 80/ 80] native        seed=5039 seat=1  loss  margin=-1.000  steps=106 max_ms=468.5  (eta 0s)
+# run done in 670s -> audit/continuous-ab-native-maxthreat-n40.jsonl
+(pairing reference = 'base')
+
+============================================================================================
+CONTINUOUS-SCORE A/B  (margin = (focal_ships - rival_ships)/(focal_ships + rival_ships) in [-1,1]; sign = win)
+vs Producer V2
+============================================================================================
+variant            n | wins (Wilson lo-hi) | mean margin [95% CI]   | paired vs base  Δmargin   
+--------------------------------------------------------------------------------------------
+base              40 |  21/40  (0.37-0.67) | +0.051 [-0.261,+0.364]  | (reference)
+native            40 |   5/40  (0.05-0.26) | -0.750 [-0.958,-0.542]  | -0.801 [-1.201,-0.399] n=40 up/dn=4/22 p=0.00  *
+
+Reading the paired column:
+  Δmargin>0 = variant dominates base on the same maps; [lo,hi] is the
+  bootstrap 95%% CI on the mean per-map margin shift; up/dn = maps the
+  variant beat / lost to base on margin; '*' = CI excludes 0 (real).
+  Win-rate Wilson CI is the OLD coarse signal, shown for continuity.
