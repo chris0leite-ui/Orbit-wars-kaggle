@@ -234,6 +234,20 @@ def _deep_opp():
     return _i("LR_DEEP_OPP", 0)
 
 
+def _win_leaf():
+    """Win-equity leaf (default 0 = OFF, byte-identical). When ON, the leaf
+    evaluator returns our CONTROL SHARE at the horizon -- (ours - theirs) /
+    (ours + theirs) in [-1, 1] -- instead of the raw ship margin (ours - theirs).
+    Rationale: the ladder scores WINS, not ship surplus, so a +5000 blowout and a
+    +1 squeaker count the same; the linear-margin leaf rates the blowout 5000x
+    higher and so trades robustness for expected magnitude (the fat negative tail).
+    The share is non-monotone in the margin (it depends on the contested total),
+    so it genuinely re-ranks plans: among equal-margin plans it prefers the one
+    that wins with a SMALLER contested pool (more decisive, less exposed control),
+    and once dominant it stops gambling for extra surplus. Parameter-free."""
+    return _i("LR_WIN_LEAF", 0) >= 1
+
+
 def _skip_comets():
     """Skip COMET targets in candidate generation (default 0 = target them, as
     today). ON because comet intercept (aim_comet) can mis-predict on a moving
@@ -527,6 +541,14 @@ def _project_value(obs_any, me):
                 theirs = tot
     else:
         theirs = float((ships * ((owner != int(me)) & (owner >= 0)).to(_torch.float32)).sum())
+    if _win_leaf():
+        # Control share in [-1, 1]: optimize probability of finishing ahead, not
+        # expected ship surplus. Saturates, so the search secures leads instead of
+        # gambling for magnitude. denom <= 0 (no live military) -> neutral 0.
+        denom = mine + theirs
+        if denom <= 0.0:
+            return 0.0
+        return (mine - theirs) / denom
     return mine - theirs
 
 
