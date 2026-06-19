@@ -252,6 +252,26 @@ def _iterdeepen():
     return _i("LR_ITERDEEPEN", 0) >= 1
 
 
+def _hold_search():
+    """Hold-search (default OFF). When ON, add a few stronger-hold whole-turn
+    candidate plans for CONTESTED held planets to the 2-ply/deep rollout menu, so
+    that holding a contested planet decisively EMERGES from simulating the
+    opponent's retake (a thin hold gets flipped in the rollout and scores worse)
+    rather than from a reinforcement-sizing heuristic. The 1-ply launch scorer
+    cannot value a *prevented loss* (reinforcing our own planet shows ~0 net-ship
+    gain); the 2-ply/deep rollout against the opponent model can. OFF =
+    byte-identical (no extra plans on the menu)."""
+    return _i("LR_HOLD_SEARCH", 0) >= 1
+
+
+def _hold_search_range():
+    """Distance within which an in-flight enemy fleet counts toward the pressure
+    on one of our planets, for selecting which held planets to offer stronger-hold
+    plans for. Wider than the reactive-defense range so the rollout is offered the
+    decisive option before the wave is already on top of us."""
+    return _f("LR_HOLD_SEARCH_RANGE", 55.0)
+
+
 def _opponent_move_fn(tier=None):
     """Return a callable (obs, seat) -> [[src,angle,ships],...] for the per-node
     opponent move, matching _producer_move_obs' signature. lite_greedy reads the
@@ -620,6 +640,75 @@ def _comet_paths_by_id_safe(obs_d):
         return {}
 
 
+def _reinforce_emit(target, total, avail, my_planets, comet_ids, comet_paths, omega):
+    """Build launches sending up to `total` ships to one of our own planets
+    (`target`) from our other planets, nearest first, drawing only on ships not
+    already committed this turn (`avail`). Does NOT mutate `avail` -- each
+    hold-search variant is an ALTERNATIVE plan, so they each draw independently
+    from the same pool; the rollout, not the bookkeeping, decides between them."""
+    txy = (float(target.x), float(target.y))
+    donors = sorted(
+        (p for p in my_planets
+         if int(p.id) != int(target.id) and avail.get(int(p.id), 0) > 0),
+        key=lambda p: dist(txy, (float(p.x), float(p.y))))
+    emit, acc = [], 0
+    for d in donors:
+        take = min(int(avail.get(int(d.id), 0)), int(total) - acc)
+        if take <= 0:
+            continue
+        shot = _plan_shot(d, target, comet_ids, comet_paths, omega, take)
+        if shot is None:
+            continue
+        angle, _eta, arr = shot
+        if not _sun_clear(d, arr):
+            continue
+        emit.append([int(d.id), float(angle), int(take)])
+        acc += take
+        if acc >= int(total):
+            break
+    return emit
+
+
+def _hold_search_plans(committed_emit, avail, my_planets, fleets, me,
+                       comet_ids, comet_paths, omega,
+                       max_targets=2, levels=(1.5, 2.5)):
+    """Stronger-hold whole-turn plan variants for the rollout menu. For the most
+    valuable CONTESTED held planets (incoming enemy mass exceeds our garrison),
+    propose plans that pour extra ships into them at a couple of strengths, ON TOP
+    of the greedy plan. These are only *candidates*: the 2-ply/deep rollout scores
+    each against the opponent model and keeps one only if it actually survives the
+    retake -- so the hold LEVEL is chosen by simulation, and over-stripping a donor
+    is self-punished (the donor falls in the rollout -> lower leaf value)."""
+    enemy_fleets = [f for f in fleets
+                    if int(f.owner) != int(me) and int(f.owner) != -1]
+    if not enemy_fleets or not my_planets:
+        return []
+    rng = _hold_search_range()
+    contested = []
+    for mine in my_planets:
+        mxy = (float(mine.x), float(mine.y))
+        threat = sum(float(f.ships) for f in enemy_fleets
+                     if dist(mxy, (float(f.x), float(f.y))) <= rng)
+        if threat > float(mine.ships):
+            contested.append((float(mine.production), threat, mine))
+    if not contested:
+        return []
+    # Most valuable / most pressured first; a high-production planet under heavy
+    # incoming mass is exactly the take-and-hold target we were losing.
+    contested.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    out = []
+    for _prod, threat, mine in contested[:max_targets]:
+        for k in levels:
+            need = int(math.ceil(k * threat)) - int(mine.ships)
+            if need <= 0:
+                continue
+            reinforce = _reinforce_emit(mine, need, avail, my_planets,
+                                        comet_ids, comet_paths, omega)
+            if reinforce:
+                out.append(list(committed_emit) + reinforce)
+    return out
+
+
 # --------------------------------------------------------------------------
 # The agent.
 #
@@ -904,6 +993,13 @@ def agent(obs, configuration=None):
         elif len(committed_emit) > 2:
             # One milder aggression level of my plan for the lookahead to weigh.
             plans.append(committed_emit[:len(committed_emit) // 2])
+        if _hold_search():
+            # Decisive holding emerges from the rollout, not a sizing rule: offer
+            # the search stronger-hold variants for contested held planets and let
+            # it keep one only if the opponent model can't flip it.
+            plans.extend(_hold_search_plans(
+                committed_emit, avail, my_planets, fleets, me,
+                comet_ids, comet_paths, omega))
         # De-dup (by repr) preserving order.
         seen, uniq = set(), []
         for p in plans:
