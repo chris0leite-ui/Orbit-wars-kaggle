@@ -123,6 +123,42 @@ def test_holdable_capture_beats_thin_capture():
     assert val[1] > val[0]
 
 
+def test_no_threat_means_full_survival():
+    """A planet I own with ZERO reachable enemy mass must keep ownership
+    probability 1 over the whole horizon (no spurious hazard haircut), and the
+    present (step 0) must be certain."""
+    P, H = 2, 6
+    owner = torch.zeros(1, P, H + 1, dtype=torch.long)   # I own both, all steps
+    ships = torch.full((1, P, H + 1), 10.0)
+    prod = torch.tensor([1.0, 1.0])
+    atk_reach = torch.zeros(P, H + 1)                     # nobody can reach me
+    val = hazard_ownership_value(owner=owner, ships=ships, prod=prod,
+                                 atk_reach=atk_reach, me=0, steepness=5.0)
+    # value = Σ_k Σ_p prod·(1 - 0) = (H+1)·P·1 = 14, undiscounted.
+    assert abs(float(val[0]) - (H + 1) * P) < 1e-4
+
+
+def test_over_committed_source_no_negative_garrison():
+    """Two launch slots from one source summing past its garrison must not feed
+    a negative garrison into the recurrence (clamped like the trusted path)."""
+    P, H, A = 2, 6, 2
+    init_owner = torch.tensor([0, -1], dtype=torch.long)
+    init_ships = torch.tensor([10.0, 3.0])               # source has only 10
+    prod = torch.tensor([1.0, 1.0])
+    alive = torch.ones(H + 1, P, dtype=torch.bool)
+    background = torch.zeros(P, H, A)
+    # two slots from planet 0 sending 8 + 8 = 16 > 10 garrison.
+    owner_traj, ships_traj = build_candidate_trajectories(
+        init_owner=init_owner, init_ships=init_ships, prod=prod,
+        alive_by_step=alive, background_arrivals=background,
+        src=torch.tensor([[0, 0]]), tgt=torch.tensor([[1, 1]]),
+        ships=torch.tensor([[8.0, 8.0]]), eta=torch.tensor([[2.0, 2.0]]),
+        owner=torch.tensor([[0, 0]]), valid=torch.tensor([[True, True]]),
+    )
+    # source garrison never goes negative at any step.
+    assert float(ships_traj[0, 0].min()) >= 0.0
+
+
 def test_deterministic_repeat():
     init_owner, init_ships, prod, alive, background, cross = _board()
     args = dict(

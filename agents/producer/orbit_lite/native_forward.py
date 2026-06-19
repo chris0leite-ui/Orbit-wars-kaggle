@@ -78,7 +78,11 @@ def build_candidate_trajectories(
     init_ships_c = init_ships.view(1, P).expand(C, P).clone()
     debit = torch.zeros(C, P, dtype=fdtype, device=device)
     debit.scatter_add_(1, src_safe, torch.where(valid_s, ships, torch.zeros_like(ships)))
-    init_ships_c = init_ships_c - debit
+    # Clamp at 0 exactly as the trusted production path does (garrison_launch
+    # source-debit): an over-committed source (multiple launch slots summing past
+    # the current garrison) must not feed a NEGATIVE garrison into the recurrence,
+    # which never clamps and would spuriously flip ownership in combat.
+    init_ships_c = (init_ships_c - debit).clamp(min=0.0)
 
     # Per-candidate arrivals = background + candidate credits.
     arrivals_c = background_arrivals.view(1, P, H, A).expand(C, P, H, A).clone()
@@ -177,7 +181,11 @@ def hazard_ownership_value(
 
     atk = atk_reach.view(1, P, H1).to(fdtype)
     garrison = ships.clamp(min=0.0)
-    leak = flip_prob(atk, garrison, steepness=steepness)        # [C, P, H+1]
+    # Zero the hazard where NO enemy mass can reach (atk==0): a planet under no
+    # physical threat must have flip probability 0, not the sigmoid's nonzero
+    # floor. This also pins present-certainty: atk_reach[:,0]==0 by construction,
+    # so step-0 survival is exactly 1 (the present is known, not discounted).
+    leak = flip_prob(atk, garrison, steepness=steepness) * (atk > 0).to(fdtype)
 
     is_mine = (owner == me).to(fdtype)
     is_opp = ((owner >= 0) & (owner != me)).to(fdtype)

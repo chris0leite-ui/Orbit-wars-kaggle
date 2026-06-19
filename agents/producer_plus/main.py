@@ -3413,7 +3413,10 @@ def plan_lite_waves(
                       "static score: %r" % (_native_err,), file=sys.stderr)
             if os.environ.get("PRODUCER_PLUS_NATIVE_STRICT", "0").strip() == "1":
                 raise
-    if _dropout_enabled() and dropout_ok:
+    # The native ownership-margin value and the dropout bolt-on's competitive
+    # score are on different scales; blending them is meaningless. Native
+    # replaces the bolt-on, so skip the dropout block when native is on.
+    if _dropout_enabled() and dropout_ok and not _native_hazard_enabled():
         # Smart dropout: score every candidate a SECOND time in a pessimist
         # world, then blend per candidate by a CONTEST RATIO (proportional to
         # enemy threat / our defending ships). The pessimist world has two
