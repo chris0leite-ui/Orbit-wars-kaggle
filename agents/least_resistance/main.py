@@ -242,6 +242,23 @@ def _contagion_reach_ticks():
     return _f("LR_CONTAGION_REACH_TICKS", 3.0)
 
 
+def _contagion_thin():
+    """Garrison at/below which one of MY planets counts as THINLY HELD -- inherently
+    exposed, so the contagion can overrun it from extended range (and unbounded). This
+    PUNISHES over-extension (grab-all fragmentation) in the rollout, but at too high a
+    threshold it also sweeps legitimately-small early holdings and over-prunes good
+    plans -- so it is DEFAULT OFF (0 = inert, original contagion); enable+tune via the
+    A/B. Read at call time."""
+    return _f("LR_CONTAGION_THIN", 0.0)
+
+
+def _contagion_thin_reach():
+    """Extended reach window (multiplier on fleet_speed) for overrunning MY thinly
+    held planets -- a thin, scattered capture is vulnerable to rivals farther away
+    than a well-garrisoned one. Read at call time."""
+    return _f("LR_CONTAGION_THIN_REACH", 8.0)
+
+
 def _wide_candidates():
     """Wide candidate generation (default OFF). When on, the deep search chooses
     among a DIVERSE pool of full-turn plans (different aggression / order / theme)
@@ -453,6 +470,8 @@ def _apply_contagion(snap, me):
     me = int(me)
     planets = snap.state[0].observation.planets
     reach = _contagion_reach_ticks()
+    thin = _contagion_thin()
+    thin_reach = _contagion_thin_reach()
     rivals = [p for p in planets if int(p[1]) >= 0 and int(p[1]) != me]
     if not rivals:
         return
@@ -465,22 +484,32 @@ def _apply_contagion(snap, me):
             continue                   # only neutrals and my planets can be overrun
         # step() already accrued this turn's production, so current ships = defense.
         defense = float(tgt[5])
+        # A thinly-held planet of MINE is exposed: the contagion reaches it from
+        # FARTHER (extended reach) AND a rival can mop up MANY thin planets in one
+        # step (it bypasses the one-flip-per-source bound -- thin captures are nearly
+        # free). This is what PUNISHES grab-all fragmentation in the rollout, so the
+        # deep search stops picking scattered tiny-fleet plans. Well-garrisoned
+        # planets keep the tighter base reach, the per-source bound, and the out-mass
+        # protection below.
+        is_thin = (owner == me and defense <= thin)
+        eff_reach = thin_reach if is_thin else reach
         tpt = (float(tgt[2]), float(tgt[3]))
         trad = float(tgt[4])
         for q in rivals:
             qid = int(q[0])
-            if qid == int(tgt[0]) or qid in used:
+            if qid == int(tgt[0]) or (qid in used and not is_thin):
                 continue
             qships = float(q[5])
             if qships <= defense:
                 continue               # this single rival can't out-mass the target
             d = dist((float(q[2]), float(q[3])), tpt) - float(q[4]) - trad
             spd = fleet_speed(qships)
-            if spd <= 0.0 or d > spd * reach:
+            if spd <= 0.0 or d > spd * eff_reach:
                 continue               # not reachable this step
             tgt[1] = int(q[1])         # flip ownership to the strongest reachable rival
             tgt[5] = max(1.0, qships - defense)   # garrison with the landing surplus
-            used.add(qid)
+            if not is_thin:
+                used.add(qid)          # normal captures stay bounded; thin mop-up is free
             break
 
 

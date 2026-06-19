@@ -122,6 +122,30 @@ def test_deterministic():
     assert a == b, "contagion must be deterministic (no RNG)"
 
 
+def test_thin_planet_overrun_at_extended_reach():
+    """Calibration: a thinly-held planet of mine is overrun from EXTENDED range
+    (punishes over-extension), while a well-garrisoned one at the same range -- with
+    its own dedicated rival -- holds because it keeps the tighter base reach."""
+    mod = _load_main()
+    os.environ.update({"LR_CONTAGION_REACH_TICKS": "3", "LR_CONTAGION_THIN": "10",
+                       "LR_CONTAGION_THIN_REACH": "8"})
+    try:
+        spd = mod.fleet_speed(100.0)
+        d = spd * 5.0   # beyond base reach (3x), within thin reach (8x)
+        planets = [
+            _p(0, 1, x=0.0, ships=100),          # rival A, next to my thin planet
+            _p(1, 0, x=d, ships=5),              # MY thin planet (<=10) -> overrun
+            _p(2, 1, x=100.0, ships=100),        # rival B, next to my strong planet
+            _p(3, 0, x=100.0 + d, ships=50),     # MY strong planet (>10) -> holds
+        ]
+        mod._apply_contagion(_Snap(planets), me=0)
+        assert planets[1][1] == 1, "thin planet must be overrun at extended reach"
+        assert planets[3][1] == 0, "well-garrisoned planet keeps base reach -> holds"
+    finally:
+        for k in ("LR_CONTAGION_REACH_TICKS", "LR_CONTAGION_THIN", "LR_CONTAGION_THIN_REACH"):
+            os.environ.pop(k, None)
+
+
 def test_no_rivals_is_noop():
     mod = _load_main()
     planets = [_p(0, 0, x=0.0, ships=5), _p(1, -1, x=1.0, ships=2)]
