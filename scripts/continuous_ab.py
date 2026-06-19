@@ -174,6 +174,45 @@ VARIANT_SETS = {
             "champion": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1"),
         },
     },
+    # Defensive-reserve "hold the source" lever. base = the LIVE champion; the
+    # variant adds LR_HOLD_SOURCE=1 (a source may not be drained below the enemy
+    # mass reachable to it). Fixes the PI-observed lose-both / short-sighted
+    # over-attacking (seeds 25260880 / 788834306 / 1576908455).
+    "holdsrc": {
+        "focal": REPO / "agents" / "least_resistance" / "main.py",
+        "ref": "live",
+        "variants": {
+            "live":        _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1"),
+            "hold_source": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1",
+                              LR_HOLD_SOURCE="1"),
+        },
+    },
+    # Dropout-perturbed score: bake the enemy's reachable mass onto our planets
+    # as a credit-only drop, score each candidate in that pessimist world too,
+    # blend (LR_DROPOUT_W). Makes holding a reserve out-score draining a source.
+    "dropscore": {
+        "focal": REPO / "agents" / "least_resistance" / "main.py",
+        "ref": "live",
+        "variants": {
+            "live":      _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1"),
+            "drop_w0.5": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1",
+                            LR_DROPOUT_SCORE="1", LR_DROPOUT_W="0.5"),
+            "drop_w0.3": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1",
+                            LR_DROPOUT_SCORE="1", LR_DROPOUT_W="0.3"),
+        },
+    },
+    # Response veto: a draining capture must survive the REAL opponent reply
+    # (producer mirror + reaction) or it is skipped. The accurate counterattack
+    # check (vs the inert outcome-space proxies).
+    "veto": {
+        "focal": REPO / "agents" / "least_resistance" / "main.py",
+        "ref": "live",
+        "variants": {
+            "live": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1"),
+            "veto": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1",
+                       LR_RESPONSE_VETO="1"),
+        },
+    },
 }
 
 
