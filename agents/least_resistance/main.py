@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import math
 import os
+import random
 import sys
 import time
 
@@ -108,7 +109,7 @@ except Exception:
     _ORBIT_OK = False
 
 # Fallback evaluator deps (pure Python, no torch).
-from lib.fast_sim import from_obs, clone, step
+from lib.fast_sim import from_obs, clone, step, ship_totals
 from lib.opp_model import lite_greedy_policy
 from lib.value_heads import inflight_value
 
@@ -621,6 +622,205 @@ def _comet_paths_by_id_safe(obs_d):
 
 
 # --------------------------------------------------------------------------
+# Robust-ensemble pick (opponent-agnostic; default OFF behind LR_ROBUST).
+#
+# Instead of assuming the opponent is the producer, we judge a candidate plan by
+# how it fares across a DISTRIBUTION of plausible futures. Each future samples
+# every rival's move from a stochastic "least-resistance" picker (they expand
+# onto neutrals AND attack -- a two-sided, opponent-agnostic, self-play-style
+# model), then plays the game forward a few turns with all seats (including us)
+# continuing on a cheap greedy policy, and scores the result by the REAL win
+# quantity: total ships (planets + fleets), measured against the SINGLE
+# STRONGEST rival in 4P (beat-the-leader = rank #1, not safe-2nd).
+#
+# All candidates are scored against the SAME sampled futures (paired -> the
+# argmax is low-noise), and we keep the plan whose WORST-fraction outcome is
+# best (a robust lower-quantile / CVaR statistic): "an action that scores well
+# against ~most of the simulated futures". This is the piece the dropout line
+# recommended but never built; it is two-sided (so it does not go passive) and
+# candidate-dependent (so the distribution actually reorders the choice).
+# --------------------------------------------------------------------------
+def _robust():
+    return os.environ.get("LR_ROBUST", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
+# Compute bounds + the one risk dial (NOT strategy weights).
+ROBUST_SAMPLES = _i("LR_ROBUST_SAMPLES", 16)   # number of sampled futures
+ROBUST_K = _i("LR_ROBUST_K", 6)                # plies rolled forward per future
+ROBUST_QUANTILE = _f("LR_ROBUST_QUANTILE", 0.25)  # average the worst this-fraction (CVaR); ->0 = worst-case, 1 = mean
+ROBUST_TEMP = _f("LR_ROBUST_TEMP", 0.7)        # rival target-sampling temperature (spread)
+ROBUST_MS = _f("LR_ROBUST_MS", 650.0)          # per-turn time budget for the pick
+
+
+def _robust_budget(obs_d):
+    """Per-turn budget (ms), drawing a self-limiting slice of the episode
+    overage bank so pivotal turns can simulate more futures on otherwise-wasted
+    headroom. Tapers as the bank drains; never exceeds base + cap."""
+    base = ROBUST_MS
+    try:
+        bank_s = float(obs_d.get("remainingOverageTime"))
+    except (TypeError, ValueError):
+        return base
+    spendable = max(0.0, bank_s - _f("LR_ROBUST_BANK_FLOOR_S", 8.0))
+    extra = min(spendable * 1000.0 * _f("LR_ROBUST_BANK_FRAC", 0.03),
+                _f("LR_ROBUST_EXTRA_CAP_MS", 1500.0))
+    return base + extra
+
+
+def _board_seed(obs_d):
+    """Deterministic per-board RNG seed (owners + rounded ships + step), so the
+    sampled futures are reproducible -- a pure function of the observation."""
+    parts = [int(obs_d.get("step", 0))]
+    for p in (obs_d.get("planets", []) or []):
+        parts.append(int(p[1]))            # owner
+        parts.append(int(round(float(p[5]))))   # ships
+    return hash(tuple(parts)) & 0x7FFFFFFF
+
+
+def _stochastic_greedy(obs, rng, temp):
+    """A rival's sampled move: least-resistance capture picker (production over
+    distance), but each owned planet picks its target by softmax SAMPLING over
+    attractiveness (temperature `temp`) instead of the hard argmax -- so across
+    futures the rivals diverge (the spread that makes robustness meaningful).
+    Sizing/affordability mirror lite_greedy_policy (expansion-aware: they grab
+    neutrals AND attack). Returns env-format launches."""
+    player = obs.get("player", 0) if isinstance(obs, dict) else getattr(obs, "player", 0)
+    planets = obs.get("planets") if isinstance(obs, dict) else getattr(obs, "planets", None)
+    if not planets:
+        return []
+    targets = [p for p in planets if int(p[1]) != int(player)]
+    if not targets:
+        return []
+    moves = []
+    for src in planets:
+        if int(src[1]) != int(player) or float(src[5]) < 10:
+            continue
+        sx, sy = float(src[2]), float(src[3])
+        scored = []
+        for t in targets:
+            if int(t[0]) == int(src[0]):
+                continue
+            dx, dy = float(t[2]) - sx, float(t[3]) - sy
+            d = math.sqrt(dx * dx + dy * dy)
+            if d < 1e-6:
+                continue
+            scored.append((float(t[6]) / (d + 1.0), t, d))
+        if not scored:
+            continue
+        # Softmax sample a target (temperature `temp`); temp<=0 -> hard argmax.
+        if temp <= 1e-6:
+            best = max(scored, key=lambda e: e[0])
+        else:
+            mx = max(s for s, _, _ in scored)
+            weights = [math.exp((s - mx) / temp) for s, _, _ in scored]
+            tot = sum(weights)
+            r = rng.random() * tot
+            acc = 0.0
+            best = scored[-1]
+            for w, e in zip(weights, scored):
+                acc += w
+                if acc >= r:
+                    best = e
+                    break
+        _, tgt, d = best
+        budget = int(src[5])
+        agg = max(5, int(budget * 0.7))
+        if agg > budget:
+            agg = budget
+        spd = fleet_speed(agg)
+        if spd <= 0:
+            continue
+        flight = max(0.0, d - float(src[4]) - float(tgt[4]) - 0.1)
+        eta = max(1, int(math.ceil(flight / spd)))
+        if int(tgt[1]) == -1:
+            defenders = float(tgt[5])
+        else:
+            defenders = float(tgt[5]) + float(tgt[6]) * eta
+        needed = int(math.ceil(defenders)) + 1
+        if needed > budget:
+            continue
+        ships = min(budget, max(agg, needed))
+        if ships < 5:
+            continue
+        angle = math.atan2(float(tgt[3]) - sy, float(tgt[2]) - sx)
+        moves.append([int(src[0]), float(angle), int(ships)])
+    return moves
+
+
+def _leader_margin(snap, me, num_seats, leader_relative):
+    """Our ships minus the strongest rival's (leader-relative, 4P win-equity) or
+    minus the sum of all rivals (material). Uses the engine's real score head."""
+    tot = ship_totals(snap)
+    ours = tot.get(int(me), 0.0)
+    rivals = [v for k, v in tot.items() if int(k) != int(me)]
+    if not rivals:
+        return ours
+    return ours - (max(rivals) if leader_relative else sum(rivals))
+
+
+def _robust_pick(obs, configuration, me, num_seats, candidate_plans,
+                 budget_ms=None):
+    """Pick the candidate plan with the best robust value across an ensemble of
+    sampled futures. All plans share the SAME futures (paired). Returns the
+    chosen plan (env-format launches). Time-guarded; always returns a legal
+    plan (falls back to candidate_plans[0])."""
+    if budget_ms is None:
+        budget_ms = ROBUST_MS
+    obs_d = _as_dict(obs)
+    leader_relative = num_seats >= 4
+    rng = random.Random(_board_seed(obs_d))
+    snap = from_obs(obs, configuration, num_seats=num_seats)
+    opps = [i for i in range(num_seats) if i != int(me)]
+
+    # Sample the futures once (shared across candidates). A future = each rival's
+    # move THIS turn (they move simultaneously, blind to my plan -> shared).
+    n_samples = max(1, ROBUST_SAMPLES)
+    futures = []
+    for _ in range(n_samples):
+        futures.append({i: _stochastic_greedy(snap.state[i].observation, rng, ROBUST_TEMP)
+                        for i in opps})
+
+    greedy = lite_greedy_policy
+
+    def robust_value(plan):
+        vals = []
+        for fut in futures:
+            s = clone(snap)
+            acts = [[] for _ in range(num_seats)]
+            acts[int(me)] = list(plan)
+            for i in opps:
+                acts[i] = list(fut[i])
+            step(s, acts, in_place=True)
+            # Continue the game two-sided: every seat (incl. us) plays the cheap
+            # greedy policy for a few plies, so "do nothing" is correctly punished
+            # (rivals expand) and a plan is judged by where it actually leads.
+            for _ in range(max(0, ROBUST_K - 1)):
+                if s.fake_env.done:
+                    break
+                a = [greedy(s.state[j].observation) for j in range(num_seats)]
+                step(s, a, in_place=True)
+            vals.append(_leader_margin(s, me, num_seats, leader_relative))
+        vals.sort()
+        # CVaR: average of the worst `quantile` fraction (robust to the tail).
+        m = max(1, int(math.ceil(max(0.0, min(1.0, ROBUST_QUANTILE)) * len(vals))))
+        return sum(vals[:m]) / float(m)
+
+    best_plan, best_v = candidate_plans[0], None
+    t0 = time.perf_counter()
+    for plan in candidate_plans:
+        if best_v is not None and (time.perf_counter() - t0) * 1000.0 > budget_ms:
+            break
+        try:
+            v = robust_value(plan)
+        except Exception:
+            continue
+        if best_v is None or v > best_v:
+            best_v, best_plan = v, plan
+    return best_plan
+
+
+# --------------------------------------------------------------------------
 # The agent.
 #
 # IMPORTANT: kaggle_environments loads an agent file by picking the LAST
@@ -912,6 +1112,12 @@ def agent(obs, configuration=None):
                 seen.add(key)
                 uniq.append(p)
         try:
+            if _robust():
+                # Opponent-agnostic robust-ensemble pick (default OFF). Replaces
+                # the producer-mirror lookahead with a distribution of sampled
+                # futures + a robust (CVaR) selection over them.
+                return _robust_pick(obs, configuration, me, num_seats, uniq,
+                                    budget_ms=_robust_budget(obs_d))
             depth = _rollout_depth()
             if depth >= 2:
                 return _deep_pick(obs, configuration, me, num_seats, uniq,
