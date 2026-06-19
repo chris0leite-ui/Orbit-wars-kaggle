@@ -18,17 +18,19 @@
   `claude/dropout-plan-review-rb5817` principles (the branch's `native_forward.py`
   was refuted as a leaf scorer; here the ideas are an *opponent model*). Tests:
   `tests/test_contagion_opponent.py` (7 pass). Default-OFF byte-identical.
-- **n=8 triage vs Producer V2 (1v1, P0, seeds 5000-5007):** mirror_d3 4/8 (−538,
-  maxms **10067**=timeout); lite_d3 2/8 (−3168, 284 ms); contagion_d3 2/8 (**−2594**,
-  330 ms). Contagion is fast + a better model than lite, still below the mirror at
-  d3; depth-5/6 were running at session end. **No config beats V2 on these hard 8
-  seeds** (V2 is strong 1v1; the original "17/28" was a different/4P set).
-- **FIRST THING NEXT SESSION:** finish the depth-5/6 contagion triage; if any
-  config's margin approaches/beats the mirror, escalate to **n≥32 (Rule 45)** and
-  also try 4P + the original 28-map set (the 1v1-vs-V2 seeds may be unrepresentative).
-  Tune `LR_CONTAGION_REACH_TICKS` / the flip threshold if contagion is too
-  aggressive (every-candidate-flips = inert ranking, the branch's warning). Submit
-  only on an n≥32 PASS + Rule 42 claim + PI sign-off.
+- **n=8 triage vs Producer V2 (1v1, P0, seeds 5000-5007) — margin MONOTONE in depth:**
+  mirror_d3 4/8 (−538, maxms **10067**=timeout); lite_d3 2/8 (−3168, 284 ms);
+  contagion d3 2/8 (−2594, 330) → d5 2/8 (−2017, 277) → **d6 3/8 (−504, 311 ms)**.
+  Contagion at **depth-6 reaches mirror-depth-3 strength (−504 ≈ −538) at ~30× less
+  time** — the "cheaper-deeper ≥ mirror" thesis. No config wins outright vs a strong
+  1v1 V2 on these hard seeds (the original "17/28" was a different/4P set), but the
+  depth trend is real.
+- **FIRST THING NEXT SESSION:** escalate the contagion line — n≥32 (Rule 45) at
+  depth 6 (and try d7+, where the margin trend may cross zero), plus **4P + the
+  original 28-map set** (1v1-vs-V2 seeds look unrepresentative). Tune
+  `LR_CONTAGION_REACH_TICKS` / the flip threshold if contagion is too aggressive
+  (every-candidate-flips → inert ranking, the branch's warning). Submit only on an
+  n≥32 PASS + Rule 42 claim + PI sign-off.
 - Details: `knowledge-base/thoughts/2026-06-19-validation-timeout-and-phase1-cheap-opponent.md`.
 
 ---

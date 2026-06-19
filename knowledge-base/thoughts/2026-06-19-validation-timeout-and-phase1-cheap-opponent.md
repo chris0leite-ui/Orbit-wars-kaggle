@@ -79,16 +79,20 @@ n=8 vs Producer V2 (1v1, focal P0, same seeds 5000-5007), margin-first read:
 |---|---|---|---|
 | mirror depth-3 (mode 0, shipped) | 4/8 | −538 | **10067 ms** ← the Kaggle timeout |
 | lite depth-3 (mode 1, Phase 1) | 2/8 | −3168 | 284 ms |
-| **contagion depth-3 (mode 2, Phase 2)** | 2/8 | **−2594** | **330 ms** |
+| contagion depth-3 (mode 2) | 2/8 | −2594 | 330 ms |
+| contagion depth-5 (mode 2) | 2/8 | −2017 | 277 ms |
+| **contagion depth-6 (mode 2)** | 3/8 | **−504** | **311 ms** |
 
-Read: lite_greedy is fast but the weakest model (−3168) — too attack-biased, no
-expansion. The **contagion** opponent (flip neutrals + my under-defended planets to
-the strongest single reachable rival, model-free, replaces opponent launches) is
-just as fast (330 ms, timing-safe) and a better model than lite (−2594), but still
-short of the mirror (−538) at depth 3. Deeper (5/6) results pending; only the mirror
-is strong here, and it's the one that times out. **No config beats Producer V2 on
-these 8 seeds** — but these are a hard 1v1 seed set (the original depth-3 "17/28"
-was a different/4P set). Implementation reuses the branch
+**Read — the promising signal:** contagion's margin is **monotone in depth**
+(−2594 → −2017 → −504), and at depth-6 it reaches the mirror's strength
+(−504 ≈ the mirror's −538) at **~30× less time** (311 ms vs 10067 ms). That is the
+"cheaper-deeper ≥ mirror" thesis realised: the cheap, model-free contagion opponent
+buys the search depth the producer mirror cannot afford under the 1 s wall. lite_greedy
+by contrast is fast but the weakest model (−3168, too attack-biased, no expansion).
+n=8 is noisy (depth-6 wlo 0.14) and **no config wins outright vs a strong 1v1 V2 on
+these hard seeds** (the original depth-3 "17/28" was a different/4P set) — but the
+monotone margin trend warrants escalation to n≥32 (Rule 45), deeper (d7+), 4P, and
+the 28-map set. Implementation reuses the branch
 `claude/dropout-plan-review-rb5817` *principles* (model neutral expansion,
 max-aggregate threat, cumulative, deterministic) — its `native_forward.py` was
 refuted as a LEAF SCORER (0/40→5/40→19/40); here the same ideas are an OPPONENT
