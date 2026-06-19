@@ -226,6 +226,15 @@ def _rollout_depth():
     return _i("LR_ROLLOUT_DEPTH", 0)
 
 
+def _deep_opp():
+    """Deep-search opponent model (Phase 1). Default 0 = the producer mirror
+    (`_producer_move_obs`, byte-identical to the shipped agent). 1 = the cheap
+    ROI-greedy expansion policy (`lib.opp_model.lite_greedy_policy`, ~1-2 ms vs
+    the mirror's ~10-50 ms per node), so the K-turn rollout can afford more
+    search depth under the 1000 ms wall. Read at call time."""
+    return _i("LR_DEEP_OPP", 0)
+
+
 def _deep_budget(obs_d):
     """Per-turn budget (ms) for deep rollout search. Draws a self-limiting slice
     of the episode overage bank (obs.remainingOverageTime) so pivotal turns can
@@ -395,6 +404,22 @@ def _producer_move_obs(obs_any, seat):
         return []
 
 
+def _deep_opp_move(obs_any, seat, mode):
+    """One node's opponent (and rollout-continuation) move for the deep search,
+    dispatched by LR_DEEP_OPP (`mode`, read once per turn). Mode 0 = the producer
+    mirror (default, byte-identical). Mode 1 = the cheap lite_greedy expansion
+    policy -- it reads the acting seat from `obs_any.player`, which fast_sim sets
+    to `seat` on every per-seat observation. Falls back to [] on any error so a
+    bad model can never crash the rollout (the search keeps the producer-floor
+    candidate)."""
+    if mode == 1:
+        try:
+            return lite_greedy_policy(obs_any)
+        except Exception:
+            return []
+    return _producer_move_obs(obs_any, seat)
+
+
 def _project_value(obs_any, me):
     """Position value: project the board `H` turns forward (all in-flight
     fleets + production + combat, no new launches) and return our garrison
@@ -485,7 +510,9 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
         budget_ms = TWOPLY_BUDGET_MS
     snap = from_obs(obs, configuration, num_seats=num_seats)
     opps = [i for i in range(num_seats) if i != int(me)]
-    opp_now = {i: _producer_move_obs(snap.state[i].observation, i) for i in opps}
+    opp_mode = _deep_opp()  # read the opponent-model knob once per turn
+    opp_now = {i: _deep_opp_move(snap.state[i].observation, i, opp_mode)
+               for i in opps}
 
     def rollout_value(plan):
         s = clone(snap)
@@ -497,7 +524,7 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
         for _ in range(max(0, int(depth) - 1)):
             if s.fake_env.done:
                 break
-            nxt = [_producer_move_obs(s.state[i].observation, i)
+            nxt = [_deep_opp_move(s.state[i].observation, i, opp_mode)
                    for i in range(num_seats)]
             step(s, nxt, in_place=True)
         try:

@@ -129,3 +129,20 @@ is reached INCREMENTALLY by swapping the mirror inside LR's deep search:
 Seam + integration details: see the approved plan / commit. Phase 1 is the
 kill-gate; Phase 2 only if cheaper-deeper wins. All default-OFF
 (`LR_DEEP_OPP=0` = current producer-mirror behaviour, byte-identical).
+
+### STATUS 2026-06-19 — Phase 1 knob IMPLEMENTED; kill-gate PENDING
+The `LR_DEEP_OPP` knob is landed in `agents/least_resistance/main.py`
+(`_deep_opp()` + `_deep_opp_move()` dispatch, wired into both opponent call sites
+of `_deep_pick`, mode read once per turn). Default `0` = producer mirror,
+byte-identical; `1` = `lite_greedy_policy`. Unit-tested
+(`tests/test_deep_opp_dispatch.py`) + timing-smoked (cheap opponent keeps the
+deep rollout under the 1 s wall — this is also the fix for the
+depth-3-mirror **validation timeout** that ERRORed sub 53836276).
+
+**NOT yet done (next session):** the win-rate **kill-gate** —
+`LR_DEEP_OPP=1` × depth {3,4,5,6} vs Producer V2 on `scripts/eval_panel.py`,
+triage n=16 → confirm best depth at n≥32 (Rule 45). Pass = cheaper-deeper
+≥ mirror-depth-3 (17/28). Only on a PASS do we build (header bakes
+`LR_DEEP_OPP=1` + the winning depth) + Rule 42 claim + PI-signed submit. On a
+FAIL the knob stays default-OFF (byte-identical) and Phase 2 (`LR_DEEP_OPP=2`,
+neutral-contagion) is the next idea.

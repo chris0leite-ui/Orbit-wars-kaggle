@@ -1,5 +1,28 @@
 # HANDOVER.md — next-session brief
 
+## ⚡ FRESH 2026-06-19 — Phase 1 cheap-opponent landed; run the kill-gate next
+- **Why we're here:** sub **53836276** (`lr_depth3`) ERRORed on Kaggle —
+  *"Validation Episode failed."* = a per-turn **timeout** in the self-vs-self
+  validation game. Depth-3 re-runs the torch producer mirror at every node and
+  has near-zero headroom under the 1 s wall; the slower validation slot tips it
+  over. This is the exact wall `state/DROPOUT_NATIVE_DESIGN.md` predicted.
+- **Done this session (implement + smoke only, NO submit):** the strategy's
+  **Phase 1** — knob `LR_DEEP_OPP` in `agents/least_resistance/main.py` makes the
+  deep-search opponent swappable; `1` plugs in the cheap `lite_greedy_policy`
+  (~1-2 ms/node vs the mirror's ~10-50 ms). Default `0` = mirror = byte-identical.
+  Unit-tested (`tests/test_deep_opp_dispatch.py`) + timing-smoked. Also installed
+  CPU torch and folded it into `bootstrap.sh` (was missing → degraded prior repro).
+- **FIRST THING NEXT SESSION — the kill-gate (Rule 45):** with torch present, run
+  `LR_DEEP_OPP=1` × depth {3,4,5,6} vs Producer V2 via `scripts/eval_panel.py`,
+  triage n=16 → confirm best depth at n≥32. **Pass = cheaper-deeper ≥ mirror
+  depth-3 (17/28).** On PASS: build with header `LR_DEEP_OPP=1`+winning depth
+  (`scripts/build_least_resistance.sh` + the env-setdefault header, bank off) →
+  Rule 42 claim → PI-signed submit. On FAIL: knob stays default-OFF; consider
+  Phase 2 (`LR_DEEP_OPP=2`, neutral-contagion).
+- Details: `knowledge-base/thoughts/2026-06-19-validation-timeout-and-phase1-cheap-opponent.md`.
+
+---
+
 > **Refreshed 2026-06-18 (smart-dropout session).** Active line =
 > **smart dropout on `agents/producer_plus`**. Read `state/DROPOUT_PLAN.md`
 > first (the executable roadmap), then

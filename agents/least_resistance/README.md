@@ -82,6 +82,8 @@ Only **compute bounds** + the producer's ROI floor (not strategy weights):
 | `LR_MAX_CANDIDATES` | 28 | most candidate moves considered per turn |
 | `LR_WALLCLOCK_MS` | 700 | per-turn budget (bails the greedy loop) |
 | `LR_EVAL` | (auto) | force `orbit` or `fallback` evaluator |
+| `LR_ROLLOUT_DEPTH` | 0 | deep-search gate: 0 = 2-ply pick; ≥2 = K-turn rollout (`_deep_pick`) |
+| `LR_DEEP_OPP` | 0 | deep-search opponent model: 0 = producer mirror (`_producer_move_obs`, ~10-50 ms/node); 1 = cheap `lite_greedy_policy` (~1-2 ms/node) so the rollout affords more depth under the 1 s wall |
 
 ## Run
 

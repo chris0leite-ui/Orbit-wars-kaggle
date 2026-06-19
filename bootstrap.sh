@@ -101,6 +101,22 @@ else
     echo "--- (no requirements.txt; skipping pip install) ---"
 fi
 
+# torch (CPU) is NOT in requirements.txt (large; provided by Kaggle's eval
+# runtime) but the least_resistance agent's orbit_lite leaf scorer + producer
+# mirror need it for local dev/eval — without it the agent silently falls back
+# to a weaker pure-Python path and the deep-search code never runs. Missing
+# torch has bitten multiple sessions; install it here (idempotent, non-fatal so
+# a network-restricted policy doesn't abort the hook).
+if python -c "import torch" 2>/dev/null; then
+    echo "--- torch: already installed ($(python -c 'import torch; print(torch.__version__)' 2>/dev/null)) ---"
+else
+    echo "--- torch: installing CPU build from download.pytorch.org ---"
+    pip install -q torch --index-url https://download.pytorch.org/whl/cpu || {
+        echo "WARNING: torch install failed (network policy?). The agent will run"
+        echo "  in its degraded no-torch fallback; deep-search eval is unavailable."
+    }
+fi
+
 # ---------------------------------------------------------------------------
 # Step 3 — competition data
 # ---------------------------------------------------------------------------
