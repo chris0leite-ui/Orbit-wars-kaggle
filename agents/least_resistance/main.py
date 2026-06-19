@@ -1322,13 +1322,13 @@ def agent(obs, configuration=None):
                 seen.add(key)
                 uniq.append(p)
         try:
-            if _robust():
-                # Opponent-agnostic robust-ensemble pick (default OFF). Score each
-                # candidate plan across sampled-opponent futures with the strong
-                # garrison-projection leaf, objective = win in the most futures
-                # (rank #1). LR_ROBUST_FILTER=1 instead builds the plan
-                # capture-by-capture, dropping captures that don't move the
-                # outcome (no small/far/low-impact sends).
+            if _robust() and num_seats >= 4:
+                # Opponent-agnostic robust-ensemble pick (default OFF), 4-PLAYER
+                # ONLY. Capability leaf (production + defensibility + reach), rank
+                # placement objective. In 2P we fall through to the proven 2-ply
+                # path (the capability/defensibility leaf is too cautious for the
+                # 2P knife-fight, where aggressive expansion wins).
+                # LR_ROBUST_FILTER=1 instead builds the plan capture-by-capture.
                 if _i("LR_ROBUST_FILTER", 0) >= 1:
                     return _robust_impact_pick(obs, configuration, me, num_seats,
                                                committed_caps,
