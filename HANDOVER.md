@@ -1,6 +1,27 @@
 # HANDOVER.md — next-session brief
 
-## ⚡ FRESH 2026-06-19 — Phase 1 cheap-opponent landed; run the kill-gate next
+## 🛑 FRESH 2026-06-19 (late) — deep-search line REFUTED; back to the DEFAULT agent
+- **Panel A/B verdict (n=27 paired, stratified `SEED_PANEL_128[::4]`, 1v1 vs V2, P0):**
+  **DEFAULT least_resistance (2-ply take-and-hold, `LR_DEEP_OPP=0`) = 18/27 (67%),
+  margin +275 — it BEATS V2.** Every deep-search variant this session loses:
+  contagion-d6 9/27 (33%, −1068); wide+calib 3/13; wide 2/12. The contagion / depth /
+  wide-candidate / calibration line is a ~34-pp REGRESSION over the default. Refuted.
+  Full write-up: `knowledge-base/thoughts/2026-06-19-contagion-deepsearch-refuted-vs-v2.md`.
+- **KEEP:** the sun-clearance fix (base agent correctness, commit `4f9cf4e`). All
+  deep-search code is default-OFF / gated (shipped agent = the default = unaffected).
+- **DO NOT** keep pushing contagion/deep-search vs V2 — the panel says it loses.
+- **NEXT (the path to crush V2): improve the DEFAULT agent's LOSSES.** It already wins
+  ~67%; the leverage is the ~1/3 it loses. On the panel it lost seeds 32 (−1922),
+  78 (−1410), 647 (−836). Pull those replays, see what V2 does to the take-and-hold
+  agent, fix THAT observation-driven. Anchor EVERY future A/B to the default baseline
+  (the methodological miss this session: comparing regressions to each other).
+- **Ladder hygiene still open:** the dead depth-3 ERROR still occupies a final-eval
+  slot; the DEFAULT agent is timing-safe and beats V2 — a clean resubmit candidate
+  (Rule 42 claim + PI sign-off).
+
+---
+
+## ⚡ 2026-06-19 — Phase 1 cheap-opponent landed; run the kill-gate next (SUPERSEDED by the refutation above)
 - **Why we're here:** sub **53836276** (`lr_depth3`) ERRORed on Kaggle —
   *"Validation Episode failed."* = a per-turn **timeout** in the self-vs-self
   validation game. Depth-3 re-runs the torch producer mirror at every node and

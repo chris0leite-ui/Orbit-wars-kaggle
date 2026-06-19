@@ -164,3 +164,14 @@ strongest single reachable rival, bounded one-flip-per-source, snowballing). Str
 torch leaf `_project_value` unchanged. Unit-tested
 (`tests/test_contagion_opponent.py`). Kill-gate triage result recorded in the
 2026-06-19 thoughts note; n≥32 + PI sign-off gate any submit.
+
+### REFUTED 2026-06-19 (late) — the whole LR deep-search line loses to V2
+Well-powered panel A/B (n=27 paired, stratified `SEED_PANEL_128[::4]`, 1v1 vs V2):
+**DEFAULT least_resistance (2-ply take-and-hold) = 18/27 (67%, +275) BEATS V2**;
+contagion-d6 = 9/27 (33%, −1068); wide+calib / wide far worse. So `LR_DEEP_OPP=2`
+contagion, deep-search depth, wide candidates, and the over-extension calibration are
+all a ~34-pp REGRESSION over the default — refuted as a path to beating V2, same shape
+as the native-scorer refutation above. Everything stays default-OFF / gated as a
+recorded negative result. The shipped agent is the default (unaffected). See
+`knowledge-base/thoughts/2026-06-19-contagion-deepsearch-refuted-vs-v2.md`. Next
+leverage = the DEFAULT agent's losses, not deep search.
