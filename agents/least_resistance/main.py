@@ -292,6 +292,23 @@ def _robust_search():
     return _i("LR_ROBUST_SEARCH", 0) >= 1
 
 
+def _best_response():
+    """Best-responding (clairvoyant) opponent in the 2-ply pick (default 0 = OFF,
+    byte-identical). Today the turn-1 opponent reply is computed on the PRE-plan
+    board and applied simultaneously (the opponent can't see our move). When ON,
+    we instead apply OUR plan alone, then let the opponent move in REACTION to the
+    resulting board -- a Stackelberg leader/follower step where the opponent
+    punishes this specific plan's weakness. Rationale (the session's key finding):
+    what disciplines plan selection is the STRENGTH of the modelled adversary, not
+    its accuracy -- modelling the real but weak/sparse V2 made the search
+    complacent (it predicted an idle opponent and over-extended). A best-responding
+    producer is a TOUGHER sparring partner than the simultaneous one: it reacts to
+    our move, so fragile plans get punished hard and robust plans score better,
+    which is exactly the discrimination we want. Same per-node opponent model (the
+    LR_DEEP_OPP selection); only WHEN it moves changes."""
+    return _i("LR_BEST_RESPONSE", 0) >= 1
+
+
 def _skip_comets():
     """Skip COMET targets in candidate generation (default 0 = target them, as
     today). ON because comet intercept (aim_comet) can mis-predict on a moving
@@ -642,7 +659,26 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=N
             v -= _dropout_penalty(leaf_obs, me, pre_owned, pre_ships, num_seats)
         return v
 
+    best_resp = _best_response()
+
     def value(plan):
+        if best_resp:
+            # Stackelberg: apply OUR plan alone, then the opponent best-responds to
+            # the resulting board (a tougher, clairvoyant adversary that punishes
+            # this plan's specific weakness). Single deterministic branch.
+            s = clone(snap)
+            acts = [[] for _ in range(num_seats)]
+            acts[int(me)] = list(plan)
+            step(s, acts, in_place=True)
+            if not s.fake_env.done:
+                nxt = [[] for _ in range(num_seats)]
+                for i in opps:
+                    nxt[i] = opp_move_fn(s.state[i].observation, i)
+                step(s, nxt, in_place=True)
+            try:
+                return _leaf(s.state[int(me)].observation)
+            except Exception:
+                return None
         # Score the plan against every turn-1 reply; keep the WORST case (min).
         # OFF -> opp_replies is a single element, so this is min-of-one == today.
         worst = None
