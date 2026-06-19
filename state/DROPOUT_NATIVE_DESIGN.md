@@ -144,8 +144,20 @@ over-penalized dominant garrisons once ship-weighted), discounted mean (ship
 units, matches the 1.5-ship roi floor). Result: churn eliminated (launches
 30→218 = base level), win-rate 5→13/40, margin −0.75→−0.35. Seed 5000 (the close
 loss the PI diagnosed) flipped to a dominant win (30 planets / 996 ships vs 1/2).
-Still below base 21/40 — remaining gap is the next lever (λ/steepness tuning or
-the 15 maps native still loses).
+Still below base 21/40 — remaining gap is the next lever.
+
+**λ/steepness sweep (n=40 each) — tuning is DONE:** native (λ=12, steep=5) 13/40
+is the sweep optimum; λ=6 12/40, λ=24 **8/40** (higher λ HURT — over-credits
+production, over-expands), steep=3/8 10/9. So the gap to base is NOT a tuning
+issue. **PI observation (seed 5006):** we fail to capture a high-value corner
+neutral that V2 takes. Refuted as candidate-generation (wide neutral shortlist =
+no change) AND as production-weighting (higher λ worse). Diagnosis: the high-value
+corner neutrals have HIGH garrisons (75/31); cracking one needs CONCENTRATED force
+(multiple coordinated waves), but the chooser commits one wave per target and
+takes cheap low-garrison filler instead — at turn 45 our 4 planets make prod 6 vs
+V2's 5 planets / prod 11. **Next lever = force concentration / coalitions**
+(PRODUCER_PLUS_FORCE_CONCENTRATION / SYNC / COALITIONS) to take defended
+high-value neutrals, NOT tuning.
 
 ## ⚠️ ALL RESULTS ABOVE THIS LINE ARE VOID (code-review 2026-06-19)
 A code review found the native scorer threw a shape error on EVERY turn
