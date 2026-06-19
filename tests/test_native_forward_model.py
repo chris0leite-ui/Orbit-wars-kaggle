@@ -62,6 +62,60 @@ def test_reachable_mass_cumulative_and_enemy_only():
     assert float(reach[0].max()) == 0.0
 
 
+def test_threat_growth_adds_prod_times_k_alpha():
+    """Anticipatory growth: the reachable enemy reservoir rises by prod*alpha*k."""
+    P, H = 3, 6
+    cross = torch.full((H + 1, P, P), 1e6)
+    for k in range(H + 1):
+        cross[k, 2, 1] = 0.5
+    ships = torch.tensor([100.0, 5.0, 40.0])
+    prod = torch.tensor([1.0, 3.0, 2.0])          # enemy p2 prod = 2.0
+    is_enemy = torch.tensor([False, False, True])
+    alpha = 0.5
+    static = reachable_enemy_mass(cross_dist=cross, ships=ships, is_enemy=is_enemy, H=H)
+    grown = reachable_enemy_mass(cross_dist=cross, ships=ships, is_enemy=is_enemy, H=H,
+                                 prod=prod, growth_alpha=alpha)
+    for k in range(1, H + 1):
+        assert abs(float(static[1, k]) - 40.0) < 1e-5
+        assert abs(float(grown[1, k]) - (40.0 + 2.0 * alpha * k)) < 1e-5
+    assert torch.all(grown[1, 1:] > static[1, 1:])
+    assert torch.all(grown[1, 1:] >= grown[1, :-1] - 1e-6)   # still non-decreasing
+
+
+def test_threat_growth_alpha_zero_is_static():
+    """alpha=0 (or prod=None) is byte-identical to the reactive reservoir."""
+    P, H = 3, 6
+    cross = torch.full((H + 1, P, P), 1e6)
+    for k in range(H + 1):
+        cross[k, 2, 1] = 0.5
+    ships = torch.tensor([100.0, 5.0, 40.0])
+    prod = torch.tensor([1.0, 3.0, 2.0])
+    is_enemy = torch.tensor([False, False, True])
+    a = reachable_enemy_mass(cross_dist=cross, ships=ships, is_enemy=is_enemy, H=H)
+    b = reachable_enemy_mass(cross_dist=cross, ships=ships, is_enemy=is_enemy, H=H,
+                             prod=prod, growth_alpha=0.0)
+    assert torch.equal(a, b)
+
+
+def test_growing_threat_lowers_frontier_capture_value():
+    """Anticipating the enemy's production growth makes a thin frontier capture
+    less attractive (rising leak prices more of its ships as at-risk)."""
+    init_owner, init_ships, prod, alive, background, cross = _board()
+    prod = torch.tensor([1.0, 3.0, 4.0])          # bump enemy p2 prod so growth bites
+    common = dict(
+        init_owner=init_owner, init_ships=init_ships, prod=prod,
+        alive_by_step=alive, background_arrivals=background,
+        src=torch.tensor([[0]]), tgt=torch.tensor([[1]]),
+        ships=torch.tensor([[60.0]]), eta=torch.tensor([[2.0]]),
+        owner=torch.tensor([[0]]), valid=torch.tensor([[True]]),
+        cross_dist=cross, cur_ships=init_ships,
+        is_enemy=(init_owner == 1), me=0, value_mode="ships",
+    )
+    static = score_candidates_native(prod_growth_alpha=0.0, **common)
+    grown = score_candidates_native(prod_growth_alpha=0.5, **common)
+    assert grown[0] < static[0]
+
+
 def _board():
     """p0 mine (huge), p1 neutral target, p2 enemy adjacent to p1."""
     P, H, A = 3, 8, 2

@@ -117,6 +117,8 @@ def reachable_enemy_mass(
     is_enemy: Tensor,     # [P] bool
     H: int,
     aggregate: str = "max",
+    prod: Tensor | None = None,   # [P] enemy production rate (None => no growth)
+    growth_alpha: float = 0.0,    # damp the over-horizon production growth; 0 = static
 ) -> Tensor:
     """Enemy mass physically routable to each planet by step k -> ``[P, H+1]``.
 
@@ -132,7 +134,16 @@ def reachable_enemy_mass(
       hits every one of my planets at once, so each frontier planet looks ~doomed
       (garrison 50 vs "threat" 340), a partial reinforcement can never help, and
       the agent abandons its planets -> the observed mid-game passivity/collapse.
-    - ``"sum"``: total reachable enemy mass (the old over-pessimistic behaviour)."""
+    - ``"sum"``: total reachable enemy mass (the old over-pessimistic behaviour).
+
+    ANTICIPATORY growth (``prod`` + ``growth_alpha`` > 0): the reservoir grows by
+    the enemy's production accrued by step k — ``mass_k = ships + prod·k·alpha``.
+    A purely-current reservoir is REACTIVE: a frontier planet's leak never rises
+    over the horizon even as the opponent's production visibly accrues into the
+    army that flips it mid-game, so the value over-expands into a thin frontier it
+    cannot hold (the observed turn 60-80 collapse). Growth makes the threat rise
+    EARLIER so ships are held/reinforced there. ``alpha`` damps the rate (the
+    opponent cannot route ALL accrued production into one fleet); 0 = static."""
     K = int(cross_dist.shape[0]) - 1
     P = int(ships.shape[0])
     device = ships.device
@@ -141,6 +152,9 @@ def reachable_enemy_mass(
 
     speed = fleet_speed(ships).to(fdtype)                       # [P] per source
     enemy_mass = torch.where(is_enemy, ships, torch.zeros_like(ships))  # [P]
+    grow = prod is not None and growth_alpha != 0.0
+    enemy_prod = (torch.where(is_enemy, prod.to(fdtype), torch.zeros_like(ships))
+                  if grow else None)                            # [P]
 
     out = torch.zeros(P, H + 1, dtype=fdtype, device=device)
     reachable_any = torch.zeros(P, P, dtype=torch.bool, device=device)  # [src, tgt]
@@ -148,7 +162,10 @@ def reachable_enemy_mass(
         d_k = cross_dist[k]                                    # [src, tgt] dist(s@0, t@k)
         reach_k = d_k <= (float(k) * speed.view(P, 1))         # [src, tgt]
         reachable_any = reachable_any | reach_k
-        masked = reachable_any.to(fdtype) * enemy_mass.view(P, 1)  # [src, tgt]
+        # per-source mass at step k: current garrison + production accrued (damped).
+        mass_k = (enemy_mass + enemy_prod * (float(growth_alpha) * float(k))
+                  if grow else enemy_mass)                     # [P]
+        masked = reachable_any.to(fdtype) * mass_k.view(P, 1)  # [src, tgt]
         if aggregate == "sum":
             out[:, k] = masked.sum(dim=0)
         else:
@@ -329,6 +346,7 @@ def score_candidates_native(
     me: int, steepness: float = 5.0, discount: float = 1.0,
     concentrate: bool = False, model_opp_expansion: bool = True,
     value_mode: str = "ships", terminal: float = 12.0,
+    prod_growth_alpha: float = 0.0,
 ) -> Tensor:
     """End-to-end native value per candidate ``[C]`` (the Phase-A scorer)."""
     H = int(background_arrivals.shape[1])
@@ -339,6 +357,7 @@ def score_candidates_native(
     )
     atk_reach = reachable_enemy_mass(
         cross_dist=cross_dist, ships=cur_ships, is_enemy=is_enemy, H=H,
+        prod=prod, growth_alpha=prod_growth_alpha,
     )
     ships_mode = value_mode != "ownership"
     inflight = _inflight_by_owner(arrivals_c) if ships_mode else None

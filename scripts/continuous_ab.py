@@ -133,6 +133,20 @@ VARIANT_SETS = {
                                 if k != "PRODUCER_PLUS_DROPOUT"},
                                PRODUCER_PLUS_NATIVE_HAZARD=1,
                                PRODUCER_PLUS_FORCE_CONCENTRATION=1),
+            # anticipatory threat: grow enemy reservoir by opp production over the
+            # horizon (alpha bracket), to hold the frontier vs the mid-game army.
+            "native_grow":  _v({k: v for k, v in _DROP_BASE.items()
+                                if k != "PRODUCER_PLUS_DROPOUT"},
+                               PRODUCER_PLUS_NATIVE_HAZARD=1,
+                               PRODUCER_PLUS_NATIVE_THREAT_GROWTH=0.5),
+            "native_grow25": _v({k: v for k, v in _DROP_BASE.items()
+                                 if k != "PRODUCER_PLUS_DROPOUT"},
+                                PRODUCER_PLUS_NATIVE_HAZARD=1,
+                                PRODUCER_PLUS_NATIVE_THREAT_GROWTH=0.25),
+            "native_grow10": _v({k: v for k, v in _DROP_BASE.items()
+                                 if k != "PRODUCER_PLUS_DROPOUT"},
+                                PRODUCER_PLUS_NATIVE_HAZARD=1,
+                                PRODUCER_PLUS_NATIVE_THREAT_GROWTH=1.0),
             # Bracket the hazard steepness to test whether the flip-hazard term
             # is load-bearing at all (s0.5 ~ flat hazard ~ pure ownership margin;
             # s20 ~ hard contest). If all three ~equal, the hazard is inert and

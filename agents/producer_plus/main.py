@@ -2402,6 +2402,20 @@ def _native_terminal() -> float:
         return 12.0
 
 
+def _native_threat_growth() -> float:
+    """Anticipatory threat: grow the enemy reachable reservoir by the opponent's
+    PRODUCTION over the horizon (mass_k = ships + prod*k*alpha) so frontier planets
+    show rising threat EARLIER and the value holds/reinforces ships there instead
+    of over-expanding into a thin frontier it can't hold (the observed turn 60-80
+    mid-game collapse). alpha damps the growth rate; 0 = OFF (static, byte-identical
+    to the reactive reservoir)."""
+    raw = os.environ.get("PRODUCER_PLUS_NATIVE_THREAT_GROWTH", "0")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _native_value_mode() -> str:
     """Native value functional: 'ships' (expected ship-margin, aligned with the
     engine's final score = total ships; default) or 'ownership' (the legacy
@@ -3435,6 +3449,7 @@ def plan_lite_waves(
                 discount=_native_discount(), concentrate=_native_selfconsist(),
                 model_opp_expansion=_native_opp_expansion(),
                 value_mode=_native_value_mode(), terminal=_native_terminal(),
+                prod_growth_alpha=_native_threat_growth(),
             )
         except Exception as _native_err:
             # Fall back to the static score, but SURFACE the failure once — a
