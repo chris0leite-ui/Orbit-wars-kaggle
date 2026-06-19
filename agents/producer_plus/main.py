@@ -2390,6 +2390,28 @@ def _native_opp_expansion() -> bool:
     )
 
 
+def _native_terminal() -> float:
+    """Post-horizon production credit for the ship-margin value (ship units per
+    unit production rate). A held planet's production becomes future ships beyond
+    the scoring horizon; crediting it keeps the value from under-valuing
+    expansion. 0 = current ships only."""
+    raw = os.environ.get("PRODUCER_PLUS_NATIVE_TERMINAL", "12.0")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 12.0
+
+
+def _native_value_mode() -> str:
+    """Native value functional: 'ships' (expected ship-margin, aligned with the
+    engine's final score = total ships; default) or 'ownership' (the legacy
+    production-weighted ownership margin, retained as a byte-identical ablation).
+    The ship-margin objective prices the ships a churning thin capture bleeds to
+    the opponent on a reflip, which production-weighted ownership cannot see."""
+    raw = os.environ.get("PRODUCER_PLUS_NATIVE_VALUE", "ships").strip().lower()
+    return "ownership" if raw == "ownership" else "ships"
+
+
 def _native_selfconsist() -> bool:
     """Self-consistency / concentrated-adversary mode for the native hazard. The
     uniform per-planet leak was inert for candidate ranking (it cancels in the
@@ -3412,6 +3434,7 @@ def plan_lite_waves(
                 me=int(pid), steepness=_native_steepness(),
                 discount=_native_discount(), concentrate=_native_selfconsist(),
                 model_opp_expansion=_native_opp_expansion(),
+                value_mode=_native_value_mode(), terminal=_native_terminal(),
             )
         except Exception as _native_err:
             # Fall back to the static score, but SURFACE the failure once — a

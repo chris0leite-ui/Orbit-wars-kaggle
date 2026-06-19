@@ -52,8 +52,13 @@ def build_candidate_trajectories(
     eta: Tensor,                 # [C, L] float
     owner: Tensor,               # [C, L] long  arriving owner
     valid: Tensor,               # [C, L] bool
-) -> tuple[Tensor, Tensor]:
-    """Per-candidate post-combat owner/garrison trajectories ``[C, P, H+1]``.
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Per-candidate post-combat owner/garrison trajectories + the arrivals tensor.
+
+    Returns ``(owner_out, ships_out, arrivals_c)`` — owner/ships are ``[C,P,H+1]``
+    post-combat garrison; ``arrivals_c`` is ``[C,P,H,A]`` the per-candidate
+    per-owner arrival buckets (background + this candidate's credits), needed to
+    attribute IN-FLIGHT ship mass to owners in the ship-margin value.
 
     Applies each candidate's launches (source debit + target credit at the eta
     bucket) on top of the shared background arrivals, then walks the SAME engine
@@ -102,7 +107,7 @@ def build_candidate_trajectories(
         init_owner=init_owner_c, init_ships=init_ships_c, prod=prod_c,
         alive=alive_c, arrivals=arrivals_c,
     )
-    return owner_out, ships_out
+    return owner_out, ships_out, arrivals_c
 
 
 def reachable_enemy_mass(
@@ -172,20 +177,33 @@ def hazard_ownership_value(
     discount: float = 1.0,
     concentrate: bool = False,
     model_opp_expansion: bool = True,
+    value_mode: str = "ships",
+    inflight: Tensor | None = None,
+    terminal: float = 12.0,
 ) -> Tensor:
-    """Expected production-weighted ownership margin over the horizon -> ``[C]``.
+    """Per-candidate value over the horizon -> ``[C]``.
 
     `P_mine(p,k) = [owner==me] · surv(p,k)` with cumulative survival
     `surv = Π_{j<=k} (1 - leak_j)` applied while I hold the planet; the leaked
-    share and opponent-held planets go to `P_opp`.
+    share, opponent-held planets, and opponent-expansion onto neutrals go to
+    `P_opp`.
+
+    ``value_mode``:
+    - ``"ships"`` (default, engine-aligned): EXPECTED SHIP-MARGIN. Weight the
+      ownership probabilities by the per-planet ship count ``s(p,k)`` (post-combat
+      garrison) instead of production, add the in-flight ship mass per owner, and
+      take the discounted MEAN over the horizon (``/Σ_k disc^k``). This matches the
+      engine's win condition (total ships, planets + fleets) and prices the ships
+      a churning capture bleeds to the opponent on a reflip.
+    - ``"ownership"`` (ablation): the legacy production-weighted ownership margin
+      (byte-identical to the pre-reformulation behaviour).
+
+    ``inflight`` (``[C, H+1, A]``, ships mode only): per-owner ship mass still in
+    transit after each step, so a launch isn't penalised during its flight window.
 
     ``concentrate`` (self-consistency / 1-round fictitious play): instead of the
-    opponent leaking from EVERY planet at once (a uniform discount that cancels
-    in the candidate argmax — the measured Phase-A failure), the opponent commits
-    its routable mass to the SINGLE most damaging of my planets per candidate.
-    The value is then `deterministic_margin − worst_single_planet_loss`, and the
-    worst-planet loss is candidate-DEPENDENT (each candidate exposes different
-    planets), so defending one's weak spot reorders the ranking."""
+    opponent leaking from EVERY planet at once, the opponent commits its routable
+    mass to the SINGLE most damaging of my planets per candidate."""
     C, P, H1 = owner.shape
     device = ships.device
     fdtype = ships.dtype
@@ -223,26 +241,82 @@ def hazard_ownership_value(
     else:
         p_opp_neutral = torch.zeros_like(is_neutral)
 
-    if not concentrate:
-        p_mine = is_mine * surv
-        p_opp = is_opp + is_mine * (1.0 - surv) + p_opp_neutral
-        margin = (p_mine - p_opp) * prod.view(1, P, 1)
-        return (margin.sum(dim=1) * disc.view(1, H1)).sum(dim=1)
+    p_mine = is_mine * surv
+    p_opp = is_opp + is_mine * (1.0 - surv) + p_opp_neutral
 
-    # Concentrated adversary: deterministic ownership margin minus the single
-    # worst planet's expected loss (the opponent's best response per candidate).
-    det_margin = ((is_mine - is_opp) * prod.view(1, P, 1)
-                  * disc.view(1, 1, H1)).sum(dim=(1, 2))         # [C]
-    # expected production lost at planet p if the opponent concentrates there:
-    # the cumulatively-leaked share of MY production stream over the horizon.
-    loss_pk = is_mine * (1.0 - surv) * prod.view(1, P, 1)        # [C, P, H+1]
-    loss_p = (loss_pk * disc.view(1, 1, H1)).sum(dim=2)         # [C, P]
-    worst = loss_p.max(dim=1).values                            # [C]
-    # Ceded-neutral opportunity cost (opponent expansion), summed over all
-    # neutrals — passivity must cost margin here too, or concentrate idles.
-    neutral_cost = (p_opp_neutral * prod.view(1, P, 1)
-                    * disc.view(1, 1, H1)).sum(dim=(1, 2))       # [C]
+    if value_mode == "ownership":
+        # ---- LEGACY production-weighted ownership margin (byte-identical) ----
+        if not concentrate:
+            margin = (p_mine - p_opp) * prod.view(1, P, 1)
+            return (margin.sum(dim=1) * disc.view(1, H1)).sum(dim=1)
+        det_margin = ((is_mine - is_opp) * prod.view(1, P, 1)
+                      * disc.view(1, 1, H1)).sum(dim=(1, 2))
+        loss_pk = is_mine * (1.0 - surv) * prod.view(1, P, 1)
+        loss_p = (loss_pk * disc.view(1, 1, H1)).sum(dim=2)
+        worst = loss_p.max(dim=1).values
+        neutral_cost = (p_opp_neutral * prod.view(1, P, 1)
+                        * disc.view(1, 1, H1)).sum(dim=(1, 2))
+        return det_margin - worst - neutral_cost
+
+    # ---- SHIPS: expected ship-margin, discounted MEAN, with in-flight mass ----
+    # Ship-weighting uses the INSTANTANEOUS leak (prob the planet is overwhelmed
+    # at step k given reachable mass vs garrison), NOT the cumulative product.
+    # The cumulative product compounds a STATIC enemy reservoir into near-certain
+    # loss (it treats the same mass as attacking every step), which when weighted
+    # by ships catastrophically under-values a dominant garrison (200 vs 50 would
+    # "erode" to a ~40% loss over the horizon). The ship-weighting already makes
+    # the instantaneous leak load-bearing (0.05·200 vs 0.99·1 differ hugely), so
+    # the cumulative compounding is neither needed nor correct here.
+    norm = float(disc.sum())
+    if inflight is not None:
+        my_if = inflight[..., me]                                 # [C, H+1]
+        inflight_margin = my_if - (inflight.sum(dim=-1) - my_if)  # [C, H+1]
+    else:
+        inflight_margin = None
+    # Ship weight = current garrison + a POST-horizon production credit. A held
+    # planet's production becomes future ships (the engine scores total ships at
+    # game end); within H≈18 only a sliver has accrued, so owning a productive
+    # planet must be credited its forward production stream or expansion is
+    # under-valued (the producer's "terminal production value" for the same
+    # reason). garrison already carries in-horizon production via the recurrence;
+    # `prod·terminal` adds the beyond-horizon stream.
+    w = garrison + prod.view(1, P, 1) * float(terminal)          # [C, P, H+1]
+    s_mine = is_mine * (1.0 - leak)
+    s_opp = is_opp + is_mine * leak
+    if model_opp_expansion:
+        s_opp = s_opp + is_neutral * leak    # ceded reachable neutrals -> opp
+
+    if not concentrate:
+        margin_k = ((s_mine - s_opp) * w).sum(dim=1)             # [C, H+1]
+        if inflight_margin is not None:
+            margin_k = margin_k + inflight_margin
+        return (margin_k * disc.view(1, H1)).sum(dim=1) / norm
+
+    det_k = ((is_mine - is_opp) * w).sum(dim=1)                  # [C, H+1]
+    if inflight_margin is not None:
+        det_k = det_k + inflight_margin
+    det_margin = (det_k * disc.view(1, H1)).sum(dim=1) / norm     # [C]
+    loss_pk = is_mine * leak * w                                  # [C, P, H+1]
+    loss_p = (loss_pk * disc.view(1, 1, H1)).sum(dim=2) / norm    # [C, P]
+    worst = loss_p.max(dim=1).values                              # [C]
+    neutral_cost = ((is_neutral * leak * w
+                     * disc.view(1, 1, H1)).sum(dim=(1, 2))) / norm \
+        if model_opp_expansion else torch.zeros_like(worst)
     return det_margin - worst - neutral_cost
+
+
+def _inflight_by_owner(arrivals_c: Tensor) -> Tensor:
+    """Per-owner ship mass still IN FLIGHT after each step -> ``[C, H+1, A]``.
+
+    ``arrivals_c`` is ``[C, P, H, A]``; bucket ``j`` lands at step ``k=j+1``. The
+    mass aloft after step ``k`` is everything scheduled for a later step."""
+    C, P, H, A = arrivals_c.shape
+    arr_owner = arrivals_c.sum(dim=1)                     # [C, H, A] over planets
+    cum_landed = torch.cumsum(arr_owner, dim=1)           # [C, H, A]
+    total = cum_landed[:, -1, :]                          # [C, A] all launched mass
+    out = total.unsqueeze(1).expand(C, H + 1, A).clone()  # step 0: all aloft
+    out[:, 1:, :] = total.unsqueeze(1) - cum_landed       # step k: minus landed<=k
+    return out
 
 
 def score_candidates_native(
@@ -254,10 +328,11 @@ def score_candidates_native(
     cross_dist: Tensor, cur_ships: Tensor, is_enemy: Tensor,
     me: int, steepness: float = 5.0, discount: float = 1.0,
     concentrate: bool = False, model_opp_expansion: bool = True,
+    value_mode: str = "ships", terminal: float = 12.0,
 ) -> Tensor:
     """End-to-end native value per candidate ``[C]`` (the Phase-A scorer)."""
     H = int(background_arrivals.shape[1])
-    owner_traj, ships_traj = build_candidate_trajectories(
+    owner_traj, ships_traj, arrivals_c = build_candidate_trajectories(
         init_owner=init_owner, init_ships=init_ships, prod=prod,
         alive_by_step=alive_by_step, background_arrivals=background_arrivals,
         src=src, tgt=tgt, ships=ships, eta=eta, owner=owner, valid=valid,
@@ -265,20 +340,23 @@ def score_candidates_native(
     atk_reach = reachable_enemy_mass(
         cross_dist=cross_dist, ships=cur_ships, is_enemy=is_enemy, H=H,
     )
+    ships_mode = value_mode != "ownership"
+    inflight = _inflight_by_owner(arrivals_c) if ships_mode else None
     val = hazard_ownership_value(
         owner=owner_traj, ships=ships_traj, prod=prod, atk_reach=atk_reach,
         me=me, steepness=steepness, discount=discount, concentrate=concentrate,
         model_opp_expansion=model_opp_expansion,
+        value_mode=value_mode, inflight=inflight, terminal=terminal,
     )
     # MARGINAL value: subtract the do-nothing baseline so the score is the
     # improvement over inaction, not an absolute board value. The producer's
-    # chooser commits candidates whose score clears a (~0) roi floor; an absolute
-    # ownership value is dominated by a constant (every candidate cedes the same
+    # chooser commits candidates whose score clears the (~1.5-ship) roi floor; an
+    # absolute value is dominated by a constant (every candidate cedes the same
     # bulk of distant neutrals) and pushes everything below the floor -> idle.
-    # The delta cancels that constant: capturing a contested neutral / defending
-    # a threatened planet is a positive marginal gain, doing nothing is exactly 0.
-    P = int(init_owner.shape[0])
-    base_owner, base_ships = build_candidate_trajectories(
+    # The delta cancels that constant (incl. shared background in-flight fleets):
+    # capturing a contested neutral / defending a threatened planet is a positive
+    # marginal gain, doing nothing is exactly 0.
+    base_owner, base_ships, base_arr = build_candidate_trajectories(
         init_owner=init_owner, init_ships=init_ships, prod=prod,
         alive_by_step=alive_by_step, background_arrivals=background_arrivals,
         src=torch.full((1, 1), -1, dtype=torch.long),
@@ -287,9 +365,11 @@ def score_candidates_native(
         owner=torch.zeros(1, 1, dtype=torch.long),
         valid=torch.zeros(1, 1, dtype=torch.bool),
     )
+    base_inflight = _inflight_by_owner(base_arr) if ships_mode else None
     base_val = hazard_ownership_value(
         owner=base_owner, ships=base_ships, prod=prod, atk_reach=atk_reach,
         me=me, steepness=steepness, discount=discount, concentrate=concentrate,
         model_opp_expansion=model_opp_expansion,
+        value_mode=value_mode, inflight=base_inflight, terminal=terminal,
     )
     return val - base_val

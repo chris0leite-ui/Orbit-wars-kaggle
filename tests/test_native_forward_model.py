@@ -87,7 +87,7 @@ def test_trajectory_parity_with_no_launches():
     )
     # one all-invalid candidate -> must reproduce the background exactly.
     z = torch.zeros(1, 1)
-    owner_traj, ships_traj = build_candidate_trajectories(
+    owner_traj, ships_traj, _ = build_candidate_trajectories(
         init_owner=init_owner, init_ships=init_ships, prod=prod,
         alive_by_step=alive, background_arrivals=background,
         src=torch.tensor([[-1]]), tgt=torch.tensor([[-1]]), ships=z,
@@ -160,10 +160,19 @@ def test_no_threat_means_full_survival():
     ships = torch.full((1, P, H + 1), 10.0)
     prod = torch.tensor([1.0, 1.0])
     atk_reach = torch.zeros(P, H + 1)                     # nobody can reach me
-    val = hazard_ownership_value(owner=owner, ships=ships, prod=prod,
-                                 atk_reach=atk_reach, me=0, steepness=5.0)
-    # value = Σ_k Σ_p prod·(1 - 0) = (H+1)·P·1 = 14, undiscounted.
-    assert abs(float(val[0]) - (H + 1) * P) < 1e-4
+    # ownership mode: value = Σ_k Σ_p prod·(1 - 0) = (H+1)·P·1 = 14, undiscounted.
+    val_own = hazard_ownership_value(owner=owner, ships=ships, prod=prod,
+                                     atk_reach=atk_reach, me=0, steepness=5.0,
+                                     value_mode="ownership")
+    assert abs(float(val_own[0]) - (H + 1) * P) < 1e-4
+    # ships mode (terminal=0 to isolate the garrison scale): discounted MEAN of
+    # the per-step ship margin; with garrison 10 on each of P planets fully held,
+    # every step's margin is P·10, so the mean is P·10 (= 20), NOT (H+1)·P·10 —
+    # pins the /Σdisc normalization to ship units.
+    val_ships = hazard_ownership_value(owner=owner, ships=ships, prod=prod,
+                                       atk_reach=atk_reach, me=0, steepness=5.0,
+                                       value_mode="ships", terminal=0.0)
+    assert abs(float(val_ships[0]) - P * 10.0) < 1e-4
 
 
 def test_over_committed_source_no_negative_garrison():
@@ -176,7 +185,7 @@ def test_over_committed_source_no_negative_garrison():
     alive = torch.ones(H + 1, P, dtype=torch.bool)
     background = torch.zeros(P, H, A)
     # two slots from planet 0 sending 8 + 8 = 16 > 10 garrison.
-    owner_traj, ships_traj = build_candidate_trajectories(
+    owner_traj, ships_traj, _ = build_candidate_trajectories(
         init_owner=init_owner, init_ships=init_ships, prod=prod,
         alive_by_step=alive, background_arrivals=background,
         src=torch.tensor([[0, 0]]), tgt=torch.tensor([[1, 1]]),
@@ -185,6 +194,72 @@ def test_over_committed_source_no_negative_garrison():
     )
     # source garrison never goes negative at any step.
     assert float(ships_traj[0, 0].min()) >= 0.0
+
+
+def _churn_board(enemy_ships):
+    """p0 mine (big source), p1 neutral prod-3 target, p2 enemy adjacent to p1."""
+    P, H, A = 3, 10, 2
+    init_owner = torch.tensor([0, -1, 1], dtype=torch.long)
+    init_ships = torch.tensor([500.0, 4.0, float(enemy_ships)])
+    prod = torch.tensor([1.0, 3.0, 1.0])
+    alive = torch.ones(H + 1, P, dtype=torch.bool)
+    background = torch.zeros(P, H, A)
+    cross = torch.full((H + 1, P, P), 1e6)
+    for k in range(H + 1):
+        cross[k, 2, 1] = 0.5   # enemy(2) threatens p1
+    return init_owner, init_ships, prod, alive, background, cross
+
+
+def test_decisive_capture_nets_strongly_positive_ships():
+    """A thick HOLDABLE capture clears the ~1.5-ship roi floor by a wide margin."""
+    io, ish, prod, alive, bg, cross = _churn_board(50)
+    val = score_candidates_native(
+        init_owner=io, init_ships=ish, prod=prod, alive_by_step=alive,
+        background_arrivals=bg,
+        src=torch.tensor([[0]]), tgt=torch.tensor([[1]]),
+        ships=torch.tensor([[200.0]]), eta=torch.tensor([[2.0]]),
+        owner=torch.tensor([[0]]), valid=torch.tensor([[True]]),
+        cross_dist=cross, cur_ships=ish, is_enemy=(io == 1), me=0,
+        value_mode="ships",
+    )
+    assert float(val[0]) > 1.5
+
+
+def test_churn_capture_nets_negative_marginal_ships():
+    """A thin capture into a huge enemy reservoir bleeds its ships to the opponent
+    on the reflip: NEGATIVE in ship-mode, but ~non-negative in ownership-mode
+    (which can't see the ship economy) — the exact divergence the change fixes."""
+    io, ish, prod, alive, bg, cross = _churn_board(500)
+    common = dict(
+        init_owner=io, init_ships=ish, prod=prod, alive_by_step=alive,
+        background_arrivals=bg,
+        src=torch.tensor([[0]]), tgt=torch.tensor([[1]]),
+        ships=torch.tensor([[60.0]]), eta=torch.tensor([[2.0]]),
+        owner=torch.tensor([[0]]), valid=torch.tensor([[True]]),
+        cross_dist=cross, cur_ships=ish, is_enemy=(io == 1), me=0,
+    )
+    ships_val = float(score_candidates_native(value_mode="ships", **common)[0])
+    own_val = float(score_candidates_native(value_mode="ownership", **common)[0])
+    assert ships_val < 0.0
+    assert ships_val < own_val
+
+
+def test_inflight_not_penalized_during_flight():
+    """A long-flight launch to a planet I will clearly hold (no enemy reach) must
+    NOT net negative in ship-mode — the in-flight term covers the flight window
+    where the ships have left the source but not yet landed."""
+    io, ish, prod, alive, bg, _ = _churn_board(50)
+    no_reach = torch.full((11, 3, 3), 1e6)   # nobody can reach anything
+    val = float(score_candidates_native(
+        init_owner=io, init_ships=ish, prod=prod, alive_by_step=alive,
+        background_arrivals=bg,
+        src=torch.tensor([[0]]), tgt=torch.tensor([[1]]),
+        ships=torch.tensor([[60.0]]), eta=torch.tensor([[5.0]]),  # long flight
+        owner=torch.tensor([[0]]), valid=torch.tensor([[True]]),
+        cross_dist=no_reach, cur_ships=ish, is_enemy=(io == 1), me=0,
+        value_mode="ships",
+    )[0])
+    assert val >= -1e-6
 
 
 def test_deterministic_repeat():
@@ -235,7 +310,10 @@ def test_concentrated_adversary_reorders_toward_defense():
         cross_dist=cross, cur_ships=init_ships, is_enemy=(init_owner == 1),
         me=0, steepness=5.0,
     )
-    conc = score_candidates_native(concentrate=True, **common)
+    # Tests the concentrate mechanism in its native (ownership) semantics. (In
+    # ship-mode, piling ships onto a not-fully-securable planet raises ships-at-
+    # risk, so "reinforce > ignore" is not a ship-space invariant.)
+    conc = score_candidates_native(concentrate=True, value_mode="ownership", **common)
     # Reinforcing the threatened high-prod planet (A) beats ignoring it (B).
     assert conc[0] > conc[1]
 
