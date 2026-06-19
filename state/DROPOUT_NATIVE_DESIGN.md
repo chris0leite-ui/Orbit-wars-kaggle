@@ -129,3 +129,37 @@ is reached INCREMENTALLY by swapping the mirror inside LR's deep search:
 Seam + integration details: see the approved plan / commit. Phase 1 is the
 kill-gate; Phase 2 only if cheaper-deeper wins. All default-OFF
 (`LR_DEEP_OPP=0` = current producer-mirror behaviour, byte-identical).
+
+### UPDATE — Phase 1 (cheap opponent) REFUTED; redirect to CACHING the mirror
+lite_greedy as the deep-search opponent (LR_DEEP_OPP=1) scored 7-9/28 at depths
+3/4/6/8 (margin -1000..-1800) vs the producer mirror at depth3 (17/28, -56).
+Searching deep against a weak/wrong opponent is actively harmful — depth pays
+ONLY with an ACCURATE opponent model. So do NOT replace the mirror; CACHE it.
+
+## Iterative deepening (the redirect — afford more MIRROR-depth under the wall)
+The deep search is a fixed-depth ROLLOUT per candidate (opponent = mirror each
+ply, no opponent branching). ID here = anytime incremental deepening, keeping
+the accurate mirror.
+
+- **Phase A (anytime ID + incremental extension), default-OFF `LR_ITERDEEPEN`:**
+  deepen d=1..cap within the timebox; **cache each candidate's Snapshot after d
+  plies and extend ONE ply to reach d+1** (no re-roll → O(D) not O(D^2)); check
+  the clock between levels; adopt only the deepest COMPLETED level's best;
+  always hold a legal move (fallback `candidate_plans[0]`). Fixes the depth-4
+  wall breach (anytime never exceeds the wall) AND lets us set a high cap and
+  let time decide the depth per turn. Gate: ID-mirror >= fixed-depth-3 mirror
+  (17/28) on the scaling harness, reaches effective depth >3 on a real fraction
+  of turns, max-turn < wall.
+- **Phase A-memo:** memoize `_producer_move_obs(board,seat)` + `_project_value`
+  by a deterministic board signature (owners + int-rounded ships + step) — the
+  mirror is the cost; same boards recur across candidates/levels. Reset per game.
+  Only if A's effective-depth gains justify it (measure cache hit-rate first).
+- **Phase B (cross-turn reuse):** persist the mirror/leaf memo (and approx. the
+  chosen line's states) across turns. Bigger; gated on A.
+
+Cross-cutting: deterministic board-hash keys, cleared at game start (seat/step +
+env-leak lessons); cache-correctness assert (cached==fresh); keep the mirror as
+opponent (accuracy is the lesson); OFF parity + anytime max-turn < 950ms +
+same-seed determinism; eval via eval_panel.py (margin-first, fresh process, 28
+maps then n>=32 + 4P + panel). Risk: memo hit-rate (rollouts share only early
+plies); A (anytime) is low-risk, A-memo/B are the bets.
