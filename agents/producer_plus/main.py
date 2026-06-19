@@ -3384,7 +3384,12 @@ def plan_lite_waves(
             score = score_candidates_native(
                 init_owner=_ow, init_ships=_sh, prod=prod,
                 alive_by_step=alive_by_step,
-                background_arrivals=garrison_status.arrivals_by_owner,
+                # arrivals_by_owner is [P, H+1, A] (carries the k=0 frame); the
+                # recurrence + native model expect [P, H, A] = steps 1..H, so
+                # strip the k=0 frame exactly as garrison_launch's sparse path
+                # does. (Without this the H derivation is +1 and the reshape
+                # throws — silently swallowed by the except below.)
+                background_arrivals=garrison_status.arrivals_by_owner[..., 1:, :],
                 src=scoring_launches.source_slots.to(torch.long),
                 tgt=scoring_launches.target_slots.to(torch.long),
                 ships=scoring_launches.ships.to(dtype),
@@ -3397,8 +3402,17 @@ def plan_lite_waves(
                 me=int(pid), steepness=_native_steepness(),
                 discount=_native_discount(), concentrate=_native_selfconsist(),
             )
-        except Exception:
-            pass  # any shape/edge failure -> fall back to the static score
+        except Exception as _native_err:
+            # Fall back to the static score, but SURFACE the failure once — a
+            # silently-swallowed native error makes the A/B measure the static
+            # scorer while reporting "native" (this exact trap voided a full
+            # kill-gate). Print once to stderr; raise if the debug knob is set.
+            if not globals().get("_NATIVE_WARNED"):
+                globals()["_NATIVE_WARNED"] = True
+                print("producer_plus: native scorer failed, falling back to "
+                      "static score: %r" % (_native_err,), file=sys.stderr)
+            if os.environ.get("PRODUCER_PLUS_NATIVE_STRICT", "0").strip() == "1":
+                raise
     if _dropout_enabled() and dropout_ok:
         # Smart dropout: score every candidate a SECOND time in a pessimist
         # world, then blend per candidate by a CONTEST RATIO (proportional to
