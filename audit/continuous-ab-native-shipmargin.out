@@ -34,3 +34,4 @@
   [ 33/ 80] base          seed=5017 seat=1  loss  margin=-1.000  steps=137 max_ms=57.2  (eta 413s)
   [ 34/ 80] native        seed=5014 seat=0  WIN   margin=+1.000  steps=175 max_ms=580.7  (eta 396s)
   [ 35/ 80] base          seed=5018 seat=0  loss  margin=-1.000  steps=136 max_ms=64.7  (eta 394s)
+  [ 36/ 80] native        seed=5016 seat=0  WIN   margin=+1.000  steps=136 max_ms=542.2  (eta 377s)
