@@ -705,7 +705,7 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
     opps = [i for i in range(num_seats) if i != int(me)]
     opp_now = {i: opp_move_fn(snap.state[i].observation, i) for i in opps}
 
-    def rollout_value(plan):
+    def rollout_value(plan, deadline_perf=None):
         s = clone(snap)
         acts = [[] for _ in range(num_seats)]
         acts[int(me)] = list(plan)
@@ -714,6 +714,13 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
         step(s, acts, in_place=True)
         for _ in range(max(0, int(depth) - 1)):
             if s.fake_env.done:
+                break
+            # Anytime guard: a single deep rollout must never overrun the turn
+            # wall. If the clock is spent, stop extending and score the current
+            # (shallower) leaf rather than running the remaining plies. This is
+            # what the depth-3 ladder submit lacked -- one full rollout could
+            # blow past 1000ms before the candidate-loop check fired -> ERROR.
+            if deadline_perf is not None and time.perf_counter() >= deadline_perf:
                 break
             nxt = [opp_move_fn(s.state[i].observation, i)
                    for i in range(num_seats)]
@@ -765,10 +772,16 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
 
     best_plan, best_v = candidate_plans[0], None
     t0 = time.perf_counter()
+    deadline_perf = t0 + budget_ms / 1000.0
     for plan in candidate_plans:
-        if best_v is not None and (time.perf_counter() - t0) * 1000.0 > budget_ms:
+        # Guard EVERY candidate including the first: once the turn budget is
+        # spent we return the best legal move found so far. candidate_plans[0]
+        # is the pre-set fallback, so bailing even before candidate[0] is still
+        # a legal move. (The old guard skipped this check while best_v was None,
+        # so candidate[0] always ran a full unbounded rollout -> the overrun.)
+        if time.perf_counter() >= deadline_perf:
             break
-        v = rollout_value(plan)
+        v = rollout_value(plan, deadline_perf=deadline_perf)
         if v is None:
             continue
         if best_v is None or v > best_v:

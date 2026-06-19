@@ -174,6 +174,27 @@ VARIANT_SETS = {
             "champion": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1"),
         },
     },
+    # Deep-search depth-3 strength, isolated on the LIVE champion (take-and-hold
+    # ON). The depth-3 ladder submit ERRORED on timing; the timing fix needs the
+    # CHEAP lite_greedy rollout opponent (LR_DEEP_OPP=1) since the producer mirror
+    # is too slow to call O(depth*seats*candidates)/turn. The 17/28 producer-wall
+    # number was measured with the PRODUCER rollout opponent, so this re-measures
+    # whether depth-3 still converts to strength with the cheap opponent. Generous
+    # LR_WALLCLOCK_MS so the search runs to full depth (the strength ceiling);
+    # wall-safety is verified separately (the repro + Rule 46 smoke).
+    "deepsearch": {
+        "focal": REPO / "agents" / "least_resistance" / "main.py",
+        "ref": "live",
+        "variants": {
+            "live":    _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1"),
+            "d3_lite": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1",
+                          LR_ROLLOUT_DEPTH="3", LR_DEEP_OPP="1",
+                          LR_ITERDEEPEN="1", LR_WALLCLOCK_MS="5000"),
+            "d3_prod": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1",
+                          LR_ROLLOUT_DEPTH="3", LR_DEEP_OPP="0",
+                          LR_ITERDEEPEN="1", LR_WALLCLOCK_MS="5000"),
+        },
+    },
     # Defensive-reserve "hold the source" lever. base = the LIVE champion; the
     # variant adds LR_HOLD_SOURCE=1 (a source may not be drained below the enemy
     # mass reachable to it). Fixes the PI-observed lose-both / short-sighted
