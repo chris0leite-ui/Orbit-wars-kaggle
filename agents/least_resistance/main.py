@@ -248,6 +248,22 @@ def _win_leaf():
     return _i("LR_WIN_LEAF", 0) >= 1
 
 
+def _robust_search():
+    """Robustness-aware multi-reply search (default 0 = OFF, byte-identical).
+    When ON, the 2-ply pick scores each candidate plan against a SET of plausible
+    turn-1 opponent replies and keeps the WORST case (min leaf) rather than a
+    single predicted reply. Rationale: our losses vs a strong peer come from
+    opponent-response uncertainty -- a plan that looks best against the one
+    predicted reply can lose badly against a slightly different one (the fat
+    negative tail). Worst-casing over a small reply set prefers plans that hold up
+    no matter which way the opponent jumps. The replies are precomputed ONCE and
+    shared across all candidate plans -- valid because moves are simultaneous (the
+    opponent cannot see our plan). Reply set: the producer mirror plus lite_greedy
+    (two genuinely different policies; both already bundled). OFF -> the set is the
+    single base reply, so min-of-one reproduces today's pick exactly."""
+    return _i("LR_ROBUST_SEARCH", 0) >= 1
+
+
 def _skip_comets():
     """Skip COMET targets in candidate generation (default 0 = target them, as
     today). ON because comet intercept (aim_comet) can mis-predict on a moving
@@ -565,9 +581,17 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=N
         opp_move_fn = _opponent_move_fn()
     snap = from_obs(obs, configuration, num_seats=num_seats)
     opps = [i for i in range(num_seats) if i != int(me)]
-    # Every opponent's predicted move this turn; shared across candidates since
-    # moves are simultaneous (they don't see my plan). 2P (one opp) and 4P (three).
-    opp_now = {i: opp_move_fn(snap.state[i].observation, i) for i in opps}
+    # Turn-1 opponent replies, precomputed ONCE and shared across all candidate
+    # plans -- valid because moves are simultaneous (the opponent can't see our
+    # plan). 2P (one opp) and 4P (three). Default: the single base reply (the
+    # LR_DEEP_OPP selection). Robust mode: a set of genuinely different policies
+    # (producer mirror + lite_greedy), scored worst-case in value() below.
+    if _robust_search():
+        reply_fns = [_producer_move_obs, lambda o, s: lite_greedy_policy(o)]
+    else:
+        reply_fns = [opp_move_fn]
+    opp_replies = [{i: fn(snap.state[i].observation, i) for i in opps}
+                   for fn in reply_fns]
     drop_on = _dropout()
     pre_owned, pre_ships = _dropout_prestate(obs, me) if drop_on else (None, None)
 
@@ -578,24 +602,34 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=N
         return v
 
     def value(plan):
-        s = clone(snap)
-        acts = [[] for _ in range(num_seats)]
-        acts[int(me)] = list(plan)
-        for i in opps:
-            acts[i] = list(opp_now[i])
-        step(s, acts, in_place=True)
-        if not s.fake_env.done:
-            # One more turn of the opponents' pressure (each replies; we stay
-            # idle -- conservative, and it surfaces the next-turn punishment the
-            # 1-ply scorer misses).
-            nxt = [[] for _ in range(num_seats)]
+        # Score the plan against every turn-1 reply; keep the WORST case (min).
+        # OFF -> opp_replies is a single element, so this is min-of-one == today.
+        worst = None
+        for opp_now in opp_replies:
+            s = clone(snap)
+            acts = [[] for _ in range(num_seats)]
+            acts[int(me)] = list(plan)
             for i in opps:
-                nxt[i] = opp_move_fn(s.state[i].observation, i)
-            step(s, nxt, in_place=True)
-        try:
-            return _leaf(s.state[int(me)].observation)
-        except Exception:
-            return None
+                acts[i] = list(opp_now[i])
+            step(s, acts, in_place=True)
+            if not s.fake_env.done:
+                # One more turn of the opponents' pressure (base model; each
+                # replies, we stay idle -- conservative, surfaces the next-turn
+                # punishment the 1-ply scorer misses). Only the turn-1 reply
+                # varies across the set, to keep the search cost bounded.
+                nxt = [[] for _ in range(num_seats)]
+                for i in opps:
+                    nxt[i] = opp_move_fn(s.state[i].observation, i)
+                step(s, nxt, in_place=True)
+            try:
+                v = _leaf(s.state[int(me)].observation)
+            except Exception:
+                v = None
+            if v is None:
+                continue
+            if worst is None or v < worst:
+                worst = v
+        return worst
 
     best_plan, best_v = candidate_plans[0], None
     t0 = time.perf_counter()
