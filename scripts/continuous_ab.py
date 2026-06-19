@@ -385,7 +385,11 @@ def report(log: Path, ref: str | None = None, landscape: str | None = None) -> N
 
         paired = ""
         if v != ref and base:
-            common = [s for s in seeds if s in base]
+            # Pair only seeds played at the SAME seat in both (guards against a
+            # resumed log with a shifted seed window pairing seat-mismatched
+            # games into an invalid Δ).
+            common = [s for s in seeds if s in base
+                      and games[s].get("seat") == base[s].get("seat")]
             deltas = [games[s]["margin"] - base[s]["margin"] for s in common]
             up = sum(1 for d in deltas if d > 1e-9)
             dn = sum(1 for d in deltas if d < -1e-9)
@@ -393,8 +397,8 @@ def report(log: Path, ref: str | None = None, landscape: str | None = None) -> N
             blo, bhi = bootstrap_ci(deltas)
             p = sign_test_p(up, dn)
             sig = "  *" if (dlo > 0 or dhi < 0) else ""
-            paired = ("%+.3f [%+.3f,%+.3f] up/dn=%d/%d p=%.2f%s"
-                      % (dmean, blo, bhi, up, dn, p, sig))
+            paired = ("%+.3f [%+.3f,%+.3f] n=%d up/dn=%d/%d p=%.2f%s"
+                      % (dmean, blo, bhi, len(common), up, dn, p, sig))
         elif v == ref:
             paired = "(reference)"
 
