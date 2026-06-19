@@ -234,6 +234,15 @@ def _deep_opp():
     return _i("LR_DEEP_OPP", 0)
 
 
+def _iterdeepen():
+    """Anytime iterative deepening for the deep rollout (default 0 = OFF, fixed
+    depth). When ON, _deep_pick deepens d=1..LR_ROLLOUT_DEPTH within the timebox,
+    extending each candidate's rollout one ply per level (no re-roll), adopting
+    only the deepest COMPLETED level -- so a high LR_ROLLOUT_DEPTH cap is bounded
+    by time per turn and never breaches the wall."""
+    return _i("LR_ITERDEEPEN", 0) >= 1
+
+
 def _opponent_move_fn(tier=None):
     """Return a callable (obs, seat) -> [[src,angle,ships],...] for the per-node
     opponent move, matching _producer_move_obs' signature. lite_greedy reads the
@@ -530,6 +539,46 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
             return _project_value(s.state[int(me)].observation, me)
         except Exception:
             return None
+
+    if _iterdeepen():
+        # Anytime iterative deepening with incremental rollout extension: keep
+        # each candidate's Snapshot after d plies and extend ONE ply to reach
+        # d+1 (no re-roll); deepen d=1..depth within the timebox; adopt only the
+        # deepest COMPLETED level's best; always hold a legal move.
+        t0 = time.perf_counter()
+        cand = []                                   # [plan, snapshot-after-d-plies]
+        for plan in candidate_plans:
+            s = clone(snap)
+            acts = [[] for _ in range(num_seats)]
+            acts[int(me)] = list(plan)
+            for i in opps:
+                acts[i] = list(opp_now[i])
+            step(s, acts, in_place=True)            # ply 1 = my move + opp_now
+            cand.append([plan, s])
+        best_plan = candidate_plans[0]
+        for d in range(1, int(depth) + 1):
+            level_best_plan, level_best_v = None, None
+            completed = True
+            for entry in cand:
+                if (time.perf_counter() - t0) * 1000.0 > budget_ms:
+                    completed = False
+                    break
+                plan, s = entry
+                if d > 1 and not s.fake_env.done:
+                    nxt = [opp_move_fn(s.state[i].observation, i)
+                           for i in range(num_seats)]
+                    step(s, nxt, in_place=True)      # extend one ply
+                try:
+                    v = _project_value(s.state[int(me)].observation, me)
+                except Exception:
+                    v = None
+                if v is not None and (level_best_v is None or v > level_best_v):
+                    level_best_v, level_best_plan = v, plan
+            if completed and level_best_plan is not None:
+                best_plan = level_best_plan
+            if not completed:
+                break
+        return best_plan
 
     best_plan, best_v = candidate_plans[0], None
     t0 = time.perf_counter()
