@@ -234,6 +234,15 @@ def _deep_opp():
     return _i("LR_DEEP_OPP", 0)
 
 
+def _skip_comets():
+    """Skip COMET targets in candidate generation (default 0 = target them, as
+    today). ON because comet intercept (aim_comet) can mis-predict on a moving
+    target and there is no oob/accuracy guard, so a missed comet shot sails
+    off-board (wasted). Temporary: disable comet targeting until the comet aim
+    is fixed."""
+    return _i("LR_SKIP_COMETS", 0) >= 1
+
+
 def _iterdeepen():
     """Anytime iterative deepening for the deep rollout (default 0 = OFF, fixed
     depth). When ON, _deep_pick deepens d=1..LR_ROLLOUT_DEPTH within the timebox,
@@ -709,6 +718,8 @@ def agent(obs, configuration=None):
         tid = int(tgt.id)
         is_enemy = int(tgt.owner) != -1
         is_comet = tid in comet_ids
+        if is_comet and _skip_comets():
+            continue                       # comet aim can miss -> oob waste; disabled for now
         prod = float(tgt.production)
 
         shots = []   # (eta, size, sid, src, angle)
