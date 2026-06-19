@@ -856,7 +856,9 @@ def agent(obs, configuration=None):
                 shot = _plan_shot(src, tgt, comet_ids, comet_paths, omega, size)
                 if shot is None:
                     continue
-                a2, eta2, _ = shot
+                a2, eta2, arr2 = shot
+                if not _sun_clear(src, arr2):
+                    continue            # re-aim at the real size can clip the sun
                 triples = [(sid, tid, size, eta2)]
                 units = units_for(triples)
                 if units is None and id2slot is not None:
@@ -883,7 +885,9 @@ def agent(obs, configuration=None):
             shot = _plan_shot(src, tgt, comet_ids, comet_paths, omega, take)
             if shot is None:
                 continue
-            a2, eta2, _ = shot
+            a2, eta2, arr2 = shot
+            if not _sun_clear(src, arr2):
+                continue                # re-aim at the real size can clip the sun
             emit.append([sid, float(a2), take])
             triples.append((sid, tid, take, eta2))
             srcs[sid] = take
