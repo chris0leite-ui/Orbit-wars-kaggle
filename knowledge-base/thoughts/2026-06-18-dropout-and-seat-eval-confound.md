@@ -104,11 +104,28 @@ Full margin curve (monotone in depth): d0 -379, d2 -217, d3 -56, d4 +20.
   1000ms wall, not by the idea. Next lever = faster/ensemble leaf eval (afford
   more depth), or confirm depth3 at n>=32 and ship.
 
+## Cheap-opponent kill-gate: REFUTED (depth needs an ACCURATE opponent model)
+Shipped depth-3 mirror LR (sub 53836276). Then Phase 1 = swap the per-node
+producer mirror for cheap lite_greedy (LR_DEEP_OPP knob; ~6x cheaper: depth4
+p50 453->71ms, so depth 6-8 fits the wall). Kill-gate vs V2, 28 maps:
+- lite_greedy d3 7/28 (margin -1778), d4 9 (-964), d6 8 (-1577), d8 9 (-1060)
+- mirror d3 17/28 (-56)  [reference]
+lite_greedy is FAR worse at every depth, and depth doesn't recover it. Lesson:
+**searching deep against a weak/wrong opponent model is actively harmful** (you
+optimize against a phantom; V2 is a producer variant so the mirror generalizes,
+lite_greedy doesn't). Depth pays ONLY with an accurate opponent model.
+=> Phase 1 REFUTED; keep LR_DEEP_OPP=0 (mirror) default (shipped depth3 unaffected).
+=> Phase 2 (contagion) now in DOUBT (also a cheap approximate opponent) -- it's a
+   better approximation than lite_greedy but must rival the mirror's accuracy.
+=> REDIRECT: don't REPLACE the accurate mirror, CACHE it -- iterative deepening +
+   cross-turn tree reuse keep accuracy while cutting recompute. That's the right
+   way to afford depth 5+. (The knob/seam from Phase 1 stays as default-OFF infra.)
+
 ## Open questions / next
-- Confirm depth3 (and capped-depth4) at n>=32 with margin -> shippable "deep
-  least_resistance".
-- Cheaper leaf eval (ensemble/faster) to afford depth 5+ under the wall.
-- Depth curve vs producer/self-play (accurate opp model) + 4P + panel.
+- Confirm shipped depth3-mirror at n>=32 + panel + 4P (the validated config).
+- Caching the mirror (iterative deepening / cross-turn tree reuse) to afford
+  more depth WITHOUT losing accuracy -- the redirect.
+- Phase 2 contagion only if it can be shown accurate enough (uncertain).
 
 ## Flags
 - The seat/`step` fix is default-ON but byte-identical when `step` is present;
