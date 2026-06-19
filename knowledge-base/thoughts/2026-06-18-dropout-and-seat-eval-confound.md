@@ -91,13 +91,24 @@ n>=32 wlo>=0.5). And LR searches a PRODUCER opponent model while playing V2, so
 this lift is despite model-mismatch (encouraging; the accurate-model curve vs
 producer/self-play should be even cleaner).
 
+## depth-4 (#2): margin curve crosses zero; depth is wall-limited at ~3-4
+Timing gate: depth4 UNCAPPED breaches the wall (max 1189ms 2P / 1035ms 4P).
+Capped (LR_WALLCLOCK_MS=650, no overage bank) it FITS: max 925ms (2P) / 871 (4P).
+Capped depth4 vs V2, 28 maps: 16/28 (wlo 0.39), margin +20, max 925ms.
+Full margin curve (monotone in depth): d0 -379, d2 -217, d3 -56, d4 +20.
+- MARGIN improves monotonically with depth and crosses zero at depth4 (LR now
+  avg AHEAD of V2 in final position) — clean compute->strength.
+- WIN-RATE plateaus ~16-17/28 (d3=17, d4=16, tied within noise).
+- depth4 is AT the timing wall (925ms capped). depth5+ infeasible without a
+  CHEAPER per-node leaf. So depth ~3-4 is the operating ceiling, set by the
+  1000ms wall, not by the idea. Next lever = faster/ensemble leaf eval (afford
+  more depth), or confirm depth3 at n>=32 and ship.
+
 ## Open questions / next
-- CONFIRM depth3 at n>=32 (margin metric); timing-check depth4 (depth3 already
-  818ms; depth4 may exceed 1000ms -> may need budget cap).
-- Depth-scaling vs producer/self-play (accurate opponent model) + 4P + panel.
-- The compute->strength lever is SEARCH DEPTH on least_resistance, not the
-  producer/dropout bolt-on. This supersedes the "ship cheap replacement vs
-  native rebuild" fork: the cheapest strong path is deeper least_resistance.
+- Confirm depth3 (and capped-depth4) at n>=32 with margin -> shippable "deep
+  least_resistance".
+- Cheaper leaf eval (ensemble/faster) to afford depth 5+ under the wall.
+- Depth curve vs producer/self-play (accurate opp model) + 4P + panel.
 
 ## Flags
 - The seat/`step` fix is default-ON but byte-identical when `step` is present;
