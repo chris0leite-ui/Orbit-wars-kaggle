@@ -137,6 +137,45 @@ def test_deterministic_repeat():
     assert torch.equal(a, b)
 
 
+def test_concentrated_adversary_reorders_toward_defense():
+    """The uniform leak gives the same penalty to all candidates (cancels in the
+    argmax); the concentrated adversary penalises whoever leaves a valuable
+    planet thin. Here a candidate that REINFORCES a threatened high-prod planet
+    must out-score one that ignores it under `concentrate=True`."""
+    P, H, A = 3, 8, 2
+    # p0 mine (source), p1 mine + HIGH prod + thin garrison + enemy adjacent
+    # (the threatened planet), p2 enemy adjacent to p1.
+    init_owner = torch.tensor([0, 0, 1], dtype=torch.long)
+    init_ships = torch.tensor([300.0, 3.0, 80.0])
+    prod = torch.tensor([1.0, 9.0, 1.0])
+    alive = torch.ones(H + 1, P, dtype=torch.bool)
+    background = torch.zeros(P, H, A)
+    cross = torch.full((H + 1, P, P), 1e6)
+    for k in range(H + 1):
+        cross[k, 2, 1] = 0.5  # enemy(2) threatens my high-prod p1
+
+    # cand A: reinforce the threatened p1 from p0 (defend).
+    # cand B: send the same mass to capture neutral-ish elsewhere (ignore p1).
+    #   (model "ignore" as launching from p0 to p2's far side = no help to p1).
+    src = torch.tensor([[0], [0]])
+    tgt = torch.tensor([[1], [0]])          # B: tgt=0 (self, no-op-ish)
+    ships = torch.tensor([[150.0], [150.0]])
+    eta = torch.tensor([[2.0], [2.0]])
+    owner = torch.tensor([[0], [0]])
+    valid = torch.tensor([[True], [True]])
+
+    common = dict(
+        init_owner=init_owner, init_ships=init_ships, prod=prod,
+        alive_by_step=alive, background_arrivals=background,
+        src=src, tgt=tgt, ships=ships, eta=eta, owner=owner, valid=valid,
+        cross_dist=cross, cur_ships=init_ships, is_enemy=(init_owner == 1),
+        me=0, steepness=5.0,
+    )
+    conc = score_candidates_native(concentrate=True, **common)
+    # Reinforcing the threatened high-prod planet (A) beats ignoring it (B).
+    assert conc[0] > conc[1]
+
+
 def test_value_drops_as_enemy_mass_grows():
     """Same holdable capture, but a bigger reachable enemy reservoir lowers it."""
     init_owner, init_ships, prod, alive, background, cross = _board()

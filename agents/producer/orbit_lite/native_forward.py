@@ -156,12 +156,21 @@ def hazard_ownership_value(
     me: int,
     steepness: float = 5.0,
     discount: float = 1.0,
+    concentrate: bool = False,
 ) -> Tensor:
     """Expected production-weighted ownership margin over the horizon -> ``[C]``.
 
-    `P_mine(p,k) = [owner==me] · (1 - flip(atk_reach, garrison))`; the leaked
-    `flip` mass and any planet the deterministic owner is an opponent both go to
-    `P_opp`. Value = Σ_k discount^k Σ_p prod_p (P_mine − P_opp)."""
+    `P_mine(p,k) = [owner==me] · surv(p,k)` with cumulative survival
+    `surv = Π_{j<=k} (1 - leak_j)` applied while I hold the planet; the leaked
+    share and opponent-held planets go to `P_opp`.
+
+    ``concentrate`` (self-consistency / 1-round fictitious play): instead of the
+    opponent leaking from EVERY planet at once (a uniform discount that cancels
+    in the candidate argmax — the measured Phase-A failure), the opponent commits
+    its routable mass to the SINGLE most damaging of my planets per candidate.
+    The value is then `deterministic_margin − worst_single_planet_loss`, and the
+    worst-planet loss is candidate-DEPENDENT (each candidate exposes different
+    planets), so defending one's weak spot reorders the ranking."""
     C, P, H1 = owner.shape
     device = ships.device
     fdtype = ships.dtype
@@ -172,25 +181,30 @@ def hazard_ownership_value(
 
     is_mine = (owner == me).to(fdtype)
     is_opp = ((owner >= 0) & (owner != me)).to(fdtype)
-    # CUMULATIVE survival: a planet I hold under sustained threat decays toward
-    # the opponent as the per-step flip hazard COMPOUNDS over the horizon.
-    # `keep = 1 - leak` is applied only on steps I actually hold the planet
-    # (held^... exponent), and `surv = Π_{j<=k} keep` integrates it. This makes
-    # the hazard the primary signal rather than an instantaneous second-order
-    # haircut (the v1-instantaneous form was dominated by the deterministic
-    # ownership term and turned out inert — steepness had zero effect).
-    keep = 1.0 - leak * is_mine                                 # [C, P, H+1]
-    surv = torch.cumprod(keep.clamp(0.0, 1.0), dim=2)          # [C, P, H+1]
-    p_mine = is_mine * surv
-    # opponent gets planets they already hold + the cumulatively-leaked share of
-    # mine. (Neutral planets contribute to neither.)
-    p_opp = is_opp + is_mine * (1.0 - surv)
 
-    margin = (p_mine - p_opp) * prod.view(1, P, 1)              # [C, P, H+1]
-    # discount^k over steps 1..H (step 0 is the present, weight 1).
     k = torch.arange(H1, device=device, dtype=fdtype)
     disc = torch.pow(torch.tensor(float(discount), dtype=fdtype, device=device), k)
-    return (margin.sum(dim=1) * disc.view(1, H1)).sum(dim=1)    # [C]
+
+    # CUMULATIVE survival under the per-planet hazard.
+    keep = 1.0 - leak * is_mine                                 # [C, P, H+1]
+    surv = torch.cumprod(keep.clamp(0.0, 1.0), dim=2)          # [C, P, H+1]
+
+    if not concentrate:
+        p_mine = is_mine * surv
+        p_opp = is_opp + is_mine * (1.0 - surv)
+        margin = (p_mine - p_opp) * prod.view(1, P, 1)
+        return (margin.sum(dim=1) * disc.view(1, H1)).sum(dim=1)
+
+    # Concentrated adversary: deterministic ownership margin minus the single
+    # worst planet's expected loss (the opponent's best response per candidate).
+    det_margin = ((is_mine - is_opp) * prod.view(1, P, 1)
+                  * disc.view(1, 1, H1)).sum(dim=(1, 2))         # [C]
+    # expected production lost at planet p if the opponent concentrates there:
+    # the cumulatively-leaked share of MY production stream over the horizon.
+    loss_pk = is_mine * (1.0 - surv) * prod.view(1, P, 1)        # [C, P, H+1]
+    loss_p = (loss_pk * disc.view(1, 1, H1)).sum(dim=2)         # [C, P]
+    worst = loss_p.max(dim=1).values                            # [C]
+    return det_margin - worst
 
 
 def score_candidates_native(
@@ -201,6 +215,7 @@ def score_candidates_native(
     owner: Tensor, valid: Tensor,
     cross_dist: Tensor, cur_ships: Tensor, is_enemy: Tensor,
     me: int, steepness: float = 5.0, discount: float = 1.0,
+    concentrate: bool = False,
 ) -> Tensor:
     """End-to-end native value per candidate ``[C]`` (the Phase-A scorer)."""
     H = int(background_arrivals.shape[1])
@@ -214,5 +229,5 @@ def score_candidates_native(
     )
     return hazard_ownership_value(
         owner=owner_traj, ships=ships_traj, prod=prod, atk_reach=atk_reach,
-        me=me, steepness=steepness, discount=discount,
+        me=me, steepness=steepness, discount=discount, concentrate=concentrate,
     )

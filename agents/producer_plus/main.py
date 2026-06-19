@@ -2380,6 +2380,17 @@ def _native_discount() -> float:
         return 1.0
 
 
+def _native_selfconsist() -> bool:
+    """Self-consistency / concentrated-adversary mode for the native hazard. The
+    uniform per-planet leak was inert for candidate ranking (it cancels in the
+    argmax); concentrating the opponent's mass on each candidate's single most
+    damaging planet makes the threat candidate-dependent so defending a weak spot
+    can reorder the ranking."""
+    return os.environ.get("PRODUCER_PLUS_NATIVE_SELFCONSIST", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _strongest_rival(obs, *, player_count: int, pid: int, dtype, device):
     """Absolute owner id of the strongest living rival (planet ships), or None."""
     enemy = obs.is_enemy & obs.alive
@@ -3384,7 +3395,7 @@ def plan_lite_waves(
                 cur_ships=obs.ships.to(dtype),
                 is_enemy=obs.is_enemy,
                 me=int(pid), steepness=_native_steepness(),
-                discount=_native_discount(),
+                discount=_native_discount(), concentrate=_native_selfconsist(),
             )
         except Exception:
             pass  # any shape/edge failure -> fall back to the static score
