@@ -464,17 +464,21 @@ def _project_value(obs_any, me):
     return mine - theirs
 
 
-def _project_outcome(obs_any, me):
+def _project_outcome(obs_any, me, horizon=None):
     """One garrison projection -> (win, margin). Project the board H turns forward
     (the producer's strong static evaluator that makes the baseline value
     expansion correctly), then read PER-PLAYER projected ship totals: `win` =
     1.0 if I'm projected rank #1, 0.5 if tied for top, else 0.0; `margin` = my
     projected ships minus the strongest rival's. Used as the leaf of the robust
     ensemble so the agnostic opponent + rank objective sit on a strong evaluator
-    rather than a crude greedy rollout."""
+    rather than a crude greedy rollout. `horizon` overrides the default
+    phase-horizon (longer sight values held production + in-flight retakes)."""
     ot = _single_obs_to_tensor(obs_any, player_id=int(me))
     pc = _largest_initial_player_count(ot)
-    H = PROJECT_HORIZON_4P if int(pc) >= 4 else PROJECT_HORIZON_2P
+    if horizon is not None:
+        H = int(horizon)
+    else:
+        H = PROJECT_HORIZON_4P if int(pc) >= 4 else PROJECT_HORIZON_2P
     cfg = _MovementConfig(
         movement_horizon=int(H), drift_epsilon=1e-3, track_fleets=True,
         player_count=int(pc), max_tracked_fleets=128,
@@ -483,21 +487,55 @@ def _project_outcome(obs_any, me):
     status = mv.garrison_status(max_horizon=int(H))
     owner = status.owner[:, int(H)]
     ships = status.ships[:, int(H)].to(_torch.float32)
-    mine = float((ships * (owner == int(me)).to(_torch.float32)).sum())
-    best_other = 0.0
-    for pl in range(int(pc)):
-        if pl == int(me):
-            continue
-        tot = float((ships * (owner == pl).to(_torch.float32)).sum())
-        if tot > best_other:
-            best_other = tot
-    if mine > best_other:
-        win = 1.0
-    elif mine == best_other:
-        win = 0.5
-    else:
-        win = 0.0
-    return win, (mine - best_other)
+    # Terminal production credit: a planet I still own at the horizon keeps
+    # producing for the rest of the game, so its value is ships PLUS its future
+    # output (LR_ROBUST_PROD_CREDIT turns' worth). Without this the short
+    # projection only credits ~H turns of production, so holding a planet always
+    # looks worse than grabbing one -> the agent never defends. With it, holding
+    # a high-production planet can out-value a low-value new grab.
+    pc_i = int(pc)
+    owner_l = owner.to(_torch.long)
+    prod = mv.planet_prod.to(_torch.float32).reshape(-1)
+    pcred = _f("LR_ROBUST_PROD_CREDIT", 12.0)
+    # CAPABILITY value per player, not raw ship count:
+    #   base = ships + production-credit (a held planet keeps producing), then
+    #   + DEFENSIBILITY (negative when my planets are out-massed by enemy force
+    #     that can reach them -> finally makes holding/defending score), and
+    #   + REACH (capturable production within strike range -> values board
+    #     position / expansion potential, not just current stuff).
+    base_val = ships + pcred * prod                       # [P]
+    cap = _torch.zeros(pc_i, dtype=_torch.float32)
+    for pl in range(pc_i):
+        cap[pl] = (base_val * (owner_l == pl).to(_torch.float32)).sum()
+
+    if os.environ.get("LR_ROBUST_CAP", "1").strip().lower() in ("1", "true", "on", "yes"):
+        try:
+            xy = ot["planets"][:, 2:4].to(_torch.float32)        # [P,2] positions
+            d = _torch.cdist(xy, xy)                              # [P,P]
+            near_def = (d <= _f("LR_ROBUST_DEF_RANGE", 35.0)).to(_torch.float32)
+            near_reach = (d <= _f("LR_ROBUST_REACH_RANGE", 45.0)).to(_torch.float32)
+            w_def = _f("LR_ROBUST_W_DEF", 1.0)
+            w_reach = _f("LR_ROBUST_W_REACH", 0.5)
+            for pl in range(pc_i):
+                mine_mask = (owner_l == pl).to(_torch.float32)   # [P]
+                enemy_mask = ((owner_l != pl) & (owner_l >= 0)).to(_torch.float32)
+                reach_enemy = near_def @ (ships * enemy_mask)     # enemy mass that can reach each planet
+                vuln = _torch.clamp(reach_enemy - ships, min=0.0)  # how out-massed each of my planets is
+                defens = -(vuln * mine_mask).sum()               # less vulnerable -> higher (closer to 0)
+                reach_prod = near_reach @ (prod * (owner_l != pl).to(_torch.float32))
+                reachv = (reach_prod * mine_mask).sum()          # capturable production in range
+                cap[pl] = cap[pl] + w_def * defens + w_reach * reachv
+        except Exception:
+            pass
+
+    mine = float(cap[int(me)])
+    rivals = [float(cap[pl]) for pl in range(pc_i) if pl != int(me)]
+    if not rivals:
+        return 1.0, mine
+    # Placement = fraction of rivals I out-CAPABILITY (tie = half). 2P = win/loss;
+    # 4P rewards out-positioning each rival -> rank-aligned but defense-sensitive.
+    beaten = sum(1.0 if mine > r else (0.5 if mine == r else 0.0) for r in rivals)
+    return beaten / len(rivals), (mine - max(rivals))
 
 
 def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=None,
@@ -687,6 +725,7 @@ ROBUST_K = _i("LR_ROBUST_K", 14)               # plies rolled forward per future
 ROBUST_QUANTILE = _f("LR_ROBUST_QUANTILE", 0.25)  # average the worst this-fraction (CVaR); ->0 = worst-case, 1 = mean
 ROBUST_TEMP = _f("LR_ROBUST_TEMP", 0.7)        # rival target-sampling temperature (spread)
 ROBUST_MS = _f("LR_ROBUST_MS", 650.0)          # per-turn time budget for the pick
+ROBUST_HORIZON = _i("LR_ROBUST_HORIZON", 0)    # leaf projection horizon override; 0 = phase default (18/13)
 
 
 def _robust_budget(obs_d):
@@ -796,17 +835,15 @@ def _leader_margin(snap, me, num_seats, leader_relative):
 
 
 def _winprob_at(snap, me):
-    """Outcome of one future: 1.0 if I have strictly the most ships (rank #1),
-    0.5 if tied for the top, else 0.0. The competition only counts win/loss/draw
-    (margin is ignored), so this is the quantity that actually moves the rating."""
+    """Placement of one future: the fraction of rivals I outscore (tie = half).
+    In 2P this is win/loss; in 4P it rewards staying ahead of each rival, so it
+    is sensitive to falling behind (not blind to defense like strict rank-#1)."""
     tot = ship_totals(snap)
     mine = tot.get(int(me), 0.0)
-    best_other = max((v for k, v in tot.items() if int(k) != int(me)), default=0.0)
-    if mine > best_other:
+    rivals = [v for k, v in tot.items() if int(k) != int(me)]
+    if not rivals:
         return 1.0
-    if mine == best_other:
-        return 0.5
-    return 0.0
+    return sum(1.0 if mine > r else (0.5 if mine == r else 0.0) for r in rivals) / len(rivals)
 
 
 def _make_robust_value(snap, me, num_seats, opps, futures, leader_relative):
@@ -836,7 +873,8 @@ def _make_robust_value(snap, me, num_seats, opps, futures, leader_relative):
                 # Strong leaf: the producer's garrison projection from the
                 # post-move position (the evaluator that makes expansion pay).
                 try:
-                    w, m = _project_outcome(s.state[int(me)].observation, me)
+                    w, m = _project_outcome(s.state[int(me)].observation, me,
+                                            horizon=(ROBUST_HORIZON or None))
                     wins += w
                     margin += m
                     n += 1
@@ -861,6 +899,27 @@ def _make_robust_value(snap, me, num_seats, opps, futures, leader_relative):
     return value
 
 
+def _pack_caps(caps, avail0):
+    """Concatenate captures' launches under a single source-availability budget,
+    skipping any capture whose sources are already spent. Keeps a combined plan
+    (e.g. defense + attacks) legal -- never double-spends a planet's garrison.
+    Returns (emit, remaining_avail)."""
+    avail = dict(avail0)
+    emit = []
+    for c in caps:
+        srcs = c.get("srcs", {}) or {}
+        if all(avail.get(s, 0) >= sz for s, sz in srcs.items()):
+            emit.extend(c.get("emit") or [])
+            for s, sz in srcs.items():
+                avail[s] = avail.get(s, 0) - sz
+    return emit, avail
+
+
+def _robust_debug():
+    return os.environ.get("LR_ROBUST_DEBUG", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _sample_futures(snap, me, opps, rng):
     """Sample `LR_ROBUST_SAMPLES` futures once (shared across candidates so the
     comparison is paired). A future = each rival's move THIS turn; rivals move
@@ -871,9 +930,10 @@ def _sample_futures(snap, me, opps, rng):
 
 
 def _robust_pick(obs, configuration, me, num_seats, candidate_plans,
-                 budget_ms=None):
+                 budget_ms=None, labels=None):
     """Pick the whole candidate plan with the best robust value across the
-    ensemble. Time-guarded; falls back to candidate_plans[0]."""
+    ensemble. Time-guarded; falls back to candidate_plans[0]. `labels` (optional,
+    parallel to candidate_plans) annotate the LR_ROBUST_DEBUG trace."""
     if budget_ms is None:
         budget_ms = ROBUST_MS
     obs_d = _as_dict(obs)
@@ -884,17 +944,26 @@ def _robust_pick(obs, configuration, me, num_seats, candidate_plans,
     futures = _sample_futures(snap, me, opps, rng)
     value = _make_robust_value(snap, me, num_seats, opps, futures, leader_relative)
 
-    best_plan, best_v = candidate_plans[0], None
+    best_plan, best_v, best_label = candidate_plans[0], None, None
+    dbg = []
     t0 = time.perf_counter()
-    for plan in candidate_plans:
+    for idx, plan in enumerate(candidate_plans):
         if best_v is not None and (time.perf_counter() - t0) * 1000.0 > budget_ms:
             break
         try:
             v = value(plan)                  # (win_fraction, mean_margin); tuple compare
         except Exception:
             continue
+        lbl = labels[idx] if labels and idx < len(labels) else str(idx)
+        if dbg is not None:
+            dbg.append((lbl, v))
         if best_v is None or v > best_v:
-            best_v, best_plan = v, plan
+            best_v, best_plan, best_label = v, plan, lbl
+    if _robust_debug():
+        step_no = int(_as_dict(obs).get("step", 0))
+        parts = " | ".join("%s win=%.2f m=%+.0f" % (l, v[0], v[1]) for l, v in dbg)
+        sys.stderr.write("[robust step=%d seats=%d] chose=%s :: %s\n" % (
+            step_no, num_seats, best_label, parts))
     return best_plan
 
 
@@ -1174,7 +1243,7 @@ def agent(obs, configuration=None):
                     candidates.append({"emit": d_emit, "units": units,
                                        "srcs": d_srcs,
                                        "rank": float(mine.production) * 2.0,
-                                       "front": 0.0})
+                                       "front": 0.0, "kind": "defend"})
 
     if not candidates:
         return []
@@ -1264,8 +1333,26 @@ def agent(obs, configuration=None):
                     return _robust_impact_pick(obs, configuration, me, num_seats,
                                                committed_caps,
                                                budget_ms=_robust_budget(obs_d))
-                return _robust_pick(obs, configuration, me, num_seats, uniq,
-                                    budget_ms=_robust_budget(obs_d))
+                # Build the robust candidate set INCLUDING standalone defense, so
+                # the win-prob leaf can choose to HOLD a planet about to flip
+                # rather than only ever counterattacking (PI observation). Defense
+                # captures are source-packed first so defend+attack stays legal.
+                defend_caps = [c for c in candidates if c.get("kind") == "defend"]
+                defend_emit, av_after_def = _pack_caps(defend_caps, available)
+                atk_on_def, _ = _pack_caps(committed_caps, av_after_def)
+                rplans = [committed_emit, producer_me]
+                rlabels = ["attack", "producer"]
+                if defend_emit:
+                    rplans.append(defend_emit); rlabels.append("defend")
+                    rplans.append(defend_emit + atk_on_def); rlabels.append("defend+attack")
+                rplans.append([]); rlabels.append("idle")
+                seen2, runiq, rlab = set(), [], []
+                for p, l in zip(rplans, rlabels):
+                    k = repr(p)
+                    if k not in seen2:
+                        seen2.add(k); runiq.append(p); rlab.append(l)
+                return _robust_pick(obs, configuration, me, num_seats, runiq,
+                                    budget_ms=_robust_budget(obs_d), labels=rlab)
             depth = _rollout_depth()
             if depth >= 2:
                 return _deep_pick(obs, configuration, me, num_seats, uniq,
