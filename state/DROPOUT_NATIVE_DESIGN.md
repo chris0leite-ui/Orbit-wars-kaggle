@@ -101,3 +101,31 @@ terminal-prod / hold-value hacks.
 This is a NEW agent, not producer_plus with knobs. The fork (in
 `state/DROPOUT_PLAN.md`): ship the cheap bolt-on replacement, OR commit to this
 rebuild. Phase A settles whether the rebuild is worth finishing.
+
+---
+
+## UPDATE 2026-06-19 — the path runs THROUGH least_resistance's search
+Evidence reordered the plan: search DEPTH converts compute→strength (shipped
+LR depth-3: 14/28→17/28 vs V2, margin monotone −379→−56), but depth is capped by
+the 1000 ms wall because each node re-runs the PRODUCER MIRROR
+(`_producer_move_obs`, ~10–50 ms, the per-node bottleneck). dropout already
+replaced the mirror at parity (ladder μ 1085.6). So the dropout-native rollout
+is reached INCREMENTALLY by swapping the mirror inside LR's deep search:
+
+- **Phase 1 (cheap opponent, kill-gate):** knob `LR_DEEP_OPP` makes the deep-search
+  opponent swappable; plug in the existing `lite_greedy_policy` (lib/opp_model.py,
+  5–50× cheaper, models expansion). Cheaper opponent → afford depth 5–6 under the
+  wall. Test: compute-scaling curve (`scripts/eval_panel.py`) `LR_DEEP_OPP=1` ×
+  depth {2..6} vs V2, each timing-checked. Cheaper-deeper ≥ mirror-depth3 (17/28)
+  → confirmed.
+- **Phase 2 (the forward model):** `LR_DEEP_OPP=2` = the neutral-CONTAGION model —
+  flip neutrals/my-planets toward the strongest rival by routable mass, grow the
+  flipped garrison (free via the recurrence), and let the rival footprint SPREAD
+  (newly-rival planets become new sources → snowball). Deterministic mean-field
+  (no RNG). This is dropout generalized to opponent EXPANSION + compounding front
+  — the cheap, model-free opponent the mirror is, minus the cost. Applied at the
+  `step()` seam (main.py ~:502 in `_deep_pick`).
+
+Seam + integration details: see the approved plan / commit. Phase 1 is the
+kill-gate; Phase 2 only if cheaper-deeper wins. All default-OFF
+(`LR_DEEP_OPP=0` = current producer-mirror behaviour, byte-identical).
