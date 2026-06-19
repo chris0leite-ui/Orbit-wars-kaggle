@@ -213,6 +213,36 @@ VARIANT_SETS = {
                        LR_RESPONSE_VETO="1"),
         },
     },
+    # Force concentration (generation): a decisive surplus on capture size forces
+    # the gang-up path to combine aligned sources -> fewer, bigger, converging
+    # attacks ("one aligned strong attack should emerge").
+    "concentrate": {
+        "focal": REPO / "agents" / "least_resistance" / "main.py",
+        "ref": "live",
+        "variants": {
+            "live":     _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1"),
+            "conc_m1.0": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1",
+                            LR_CONCENTRATE="1", LR_CONCENTRATE_MARGIN="1.0"),
+            "conc_m2.0": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1",
+                            LR_CONCENTRATE="1", LR_CONCENTRATE_MARGIN="2.0"),
+        },
+    },
+    # SELECTIVE concentration: decisive surplus on the top-N targets only (one
+    # aligned strong strike on the best target), not every capture -- avoids the
+    # blanket over-drain that made conc_m2.0 significantly worse.
+    "selconc": {
+        "focal": REPO / "agents" / "least_resistance" / "main.py",
+        "ref": "live",
+        "variants": {
+            "live":      _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1"),
+            "sel_f1_m2": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1",
+                            LR_CONCENTRATE="1", LR_CONCENTRATE_FRONTS="1",
+                            LR_CONCENTRATE_MARGIN="2.0"),
+            "sel_f2_m1.5": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1",
+                              LR_CONCENTRATE="1", LR_CONCENTRATE_FRONTS="2",
+                              LR_CONCENTRATE_MARGIN="1.5"),
+        },
+    },
 }
 
 

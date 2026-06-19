@@ -298,6 +298,22 @@ def _dropout_score():
     return _i("LR_DROPOUT_SCORE", 0) >= 1
 
 
+def _concentrate():
+    """Force-concentration gate (default OFF, byte-identical when OFF). Adds a
+    decisive surplus to each capture size so the existing gang-up path combines
+    aligned sources into one strong strike and fewer fronts get committed --
+    'one aligned strong attack' emerges instead of scattered minimum captures.
+
+    Grounded in PI ladder replays + a fleet-size measurement: in losses we
+    fragment (our fleets ~19 mean vs Producer V2's ~32, 39% of launches < 10
+    ships); in wins we concentrate. A bigger required size means the cheapest
+    single source can't solo it, so the gang-up branch combines the nearest
+    sources (convergence) and draining more per strike leaves fewer ships for
+    additional fronts -- concentration emerges via GENERATION (the lever that
+    worked here historically), not a value tweak (three of which were inert)."""
+    return _i("LR_CONCENTRATE", 0) >= 1
+
+
 def _response_veto():
     """Response-veto gate (default OFF, byte-identical when OFF). During the
     greedy commit, a capture that DRAINS a source below the enemy mass reachable
@@ -892,6 +908,23 @@ def agent(obs, configuration=None):
     # Larger sizes force source-combining, so fewer / bigger fleets (concentration)
     # emerge naturally. Set LR_HOLD_MARGIN=0 to disable.
     hold_margin = _f("LR_HOLD_MARGIN", 0.5)
+    # Force-concentration (default OFF): a decisive surplus that forces the
+    # gang-up path to combine aligned sources into a strong strike. SELECTIVE --
+    # applied only to the top LR_CONCENTRATE_FRONTS targets by a cheap
+    # value/distance proxy ("one aligned strong attack on the best target"),
+    # NOT to every capture (a blanket surplus over-drains -- A/B-confirmed worse).
+    concentrate_on = _concentrate()
+    conc_margin = _f("LR_CONCENTRATE_MARGIN", 1.0)
+    conc_target_ids = set()
+    if concentrate_on and my_planets and targets:
+        n_fronts = max(1, _i("LR_CONCENTRATE_FRONTS", 1))
+
+        def _conc_proxy(t):
+            d = min(dist((float(t.x), float(t.y)), (float(p.x), float(p.y)))
+                    for p in my_planets)
+            return float(t.production) / max(1.0, d / ref_speed)
+        conc_target_ids = {int(t.id) for t in
+                           sorted(targets, key=_conc_proxy, reverse=True)[:n_fronts]}
 
     def units_for(launch_triples):
         # launch_triples: list of (src_id, tgt_id, ships, eta)
@@ -928,6 +961,8 @@ def agent(obs, configuration=None):
             size = int(math.ceil(defenders)) + 1
             if is_enemy and hold_margin > 0.0:
                 size += int(math.ceil(hold_margin * defenders))   # surplus to hold
+            if concentrate_on and tid in conc_target_ids and defenders > 0.0:
+                size += int(math.ceil(conc_margin * defenders))   # decisive surplus on the BEST target(s) only -> aligned strike
             shots.append((eta, size, int(src.id), src, angle))
         if not shots:
             continue
