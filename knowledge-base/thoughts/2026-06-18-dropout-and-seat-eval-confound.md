@@ -121,11 +121,29 @@ lite_greedy doesn't). Depth pays ONLY with an accurate opponent model.
    cross-turn tree reuse keep accuracy while cutting recompute. That's the right
    way to afford depth 5+. (The knob/seam from Phase 1 stays as default-OFF infra.)
 
+## TIMING-DETERMINISM + idle-timeout failure mode (PI replay observation)
+PI watched a depth3 render: blue winning, then "stops doing anything" ~step 114,
+loses (315-turn drag). Diagnosed:
+- The deep search is WALL-CLOCK timeboxed -> timing-sensitive / non-deterministic.
+  Under CPU CONTENTION (I rendered while the A/B ran), turns ballooned >1s,
+  drained the env overage bank, and kaggle_environments BENCHED the agent
+  (timeout -> inactive -> forced idle from ~114) -> lost a won game.
+- CLEAN (no contention): same seed5001 depth3 WINS, 137 turns, ACTIVE throughout,
+  max 726ms, 0 timeouts. So the idle was a contention artifact, NOT a logic bug.
+Two hard rules now:
+- RUN COMPUTE ONE JOB AT A TIME. Concurrent jobs starve the timebox -> garbage
+  results (3759ms turns seen) AND can bench the agent mid-game. (Bit us twice.)
+- SHIPPING RISK: timeboxed deep search + slow/loaded ladder hardware can breach
+  1000ms -> overage-bank drain -> idle -> thrown game. Shipped depth3 runs
+  ~730-870ms clean = THIN margin. Watch the depth3 ladder read for stalls
+  (score stuck ~600 = timing out; climbing past ~1000 = fine). Mitigation if it
+  stalls: lower the wallclock budget / cap depth harder for guaranteed headroom.
+
 ## Open questions / next
-- Confirm shipped depth3-mirror at n>=32 + panel + 4P (the validated config).
-- Caching the mirror (iterative deepening / cross-turn tree reuse) to afford
-  more depth WITHOUT losing accuracy -- the redirect.
-- Phase 2 contagion only if it can be shown accurate enough (uncertain).
+- Confirm shipped depth3-mirror at n>=32 + panel + 4P (run ALONE).
+- A1 iterative deepening: clean A/B (id_cap8 vs fixed_d3) -- prelim contaminated
+  read was 18/28 margin +332 (vs fixed-d3 17/28 -56), re-running clean.
+- Caching the mirror (memo / cross-turn) to afford depth without losing accuracy.
 
 ## Flags
 - The seat/`step` fix is default-ON but byte-identical when `step` is present;
