@@ -242,6 +242,15 @@ def _contagion_reach_ticks():
     return _f("LR_CONTAGION_REACH_TICKS", 3.0)
 
 
+def _wide_candidates():
+    """Wide candidate generation (default OFF). When on, the deep search chooses
+    among a DIVERSE pool of full-turn plans (different aggression / order / theme)
+    instead of ~5 near-identical variants of the single greedy plan. Read at call
+    time."""
+    return os.environ.get("LR_WIDE_CANDIDATES", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _deep_budget(obs_d):
     """Per-turn budget (ms) for deep rollout search. Draws a self-limiting slice
     of the episode overage bank (obs.remainingOverageTime) so pivotal turns can
@@ -473,6 +482,90 @@ def _apply_contagion(snap, me):
             tgt[5] = max(1.0, qships - defense)   # garrison with the landing surplus
             used.add(qid)
             break
+
+
+def _reachable_rival_mass(target_row, planets, me, reach=None):
+    """Strongest single rival (max-aggregate threat, NOT the sum) that can reach
+    `target_row` within `fleet_speed(ships) * reach` this step -> that rival's ship
+    count (0.0 if none). The shared 'what can overrun this planet' measure: used to
+    ORDER captures by holdability (take what rivals can't retake) and conceptually
+    mirrors the contagion opponent's flip test. Indexes rows as
+    [id, owner, x, y, radius, ships, production] -- works on Planet namedtuples and
+    raw obs rows alike."""
+    me = int(me)
+    if reach is None:
+        reach = _contagion_reach_ticks()
+    tid = int(target_row[0])
+    tx, ty, trad = float(target_row[2]), float(target_row[3]), float(target_row[4])
+    best = 0.0
+    for q in planets:
+        if int(q[1]) < 0 or int(q[1]) == me or int(q[0]) == tid:
+            continue
+        qs = float(q[5])
+        if qs <= best:
+            continue
+        d = dist((float(q[2]), float(q[3])), (tx, ty)) - float(q[4]) - trad
+        spd = fleet_speed(qs)
+        if spd > 0.0 and d <= spd * reach:
+            best = qs
+    return best
+
+
+def _greedy_commit_cheap(candidates, order_key, available, max_captures=None):
+    """Score-free plan builder: commit affordable captures in `order_key` order until
+    sources run out (or `max_captures` reached). Diversity for the deep search comes
+    from the ORDER / SUBSET / cardinality chosen here, NOT from re-scoring -- the
+    contagion rollout in _deep_pick does the real (expensive) evaluation, so plan
+    generation stays cheap. Returns the env-format emit `[[src_id, angle, ships], ...]`."""
+    avail = dict(available)
+    emit, n = [], 0
+    for c in sorted(candidates, key=order_key):
+        if max_captures is not None and n >= max_captures:
+            break
+        srcs = c["srcs"]
+        if any(avail.get(s, 0) < sz for s, sz in srcs.items()):
+            continue
+        emit = emit + c["emit"]
+        for s, sz in srcs.items():
+            avail[s] = avail.get(s, 0) - sz
+        n += 1
+    return emit
+
+
+def _wide_candidate_plans(candidates, producer_me, committed_emit, available,
+                          planets, by_id, me, max_plans=None):
+    """A diverse, de-duped, capped pool of full-turn plans for _deep_pick to score.
+    Spans aggression (cardinality), commit ORDER (rank / holdability / nearest), and
+    THEME (enemy-denial / neutral-expansion), plus the safe anchors (producer floor,
+    the shipped greedy plan, hold-everything). Ordered safe/strong first so the
+    time-guarded deep search keeps the best of what it can afford (anytime-safe)."""
+    if max_plans is None:
+        max_plans = _i("LR_WIDE_MAX", 12)
+    rank_order = lambda c: (-float(c["rank"]), float(c["front"]))
+    near_order = lambda c: float(c["front"])
+    def hold_order(c):
+        tid = c.get("tid")
+        return _reachable_rival_mass(by_id[tid], planets, me) if tid in by_id else 1e18
+    pool = [producer_me, committed_emit, []]            # safe/strong anchors first
+    pool.append(_greedy_commit_cheap(candidates, rank_order, available))
+    pool.append(_greedy_commit_cheap(candidates, hold_order, available))   # take-and-hold
+    pool.append(_greedy_commit_cheap(candidates, rank_order, available, max_captures=1))
+    pool.append(_greedy_commit_cheap(candidates, hold_order, available, max_captures=3))
+    pool.append(_greedy_commit_cheap(candidates, near_order, available))
+    for kind in ("enemy", "neutral"):                  # denial vs expansion themes
+        sub = [c for c in candidates if c.get("kind") == kind]
+        if sub:
+            pool.append(_greedy_commit_cheap(sub, rank_order, available))
+    seen, uniq = set(), []
+    for p in pool:
+        key = repr(sorted(p, key=lambda e: (int(e[0]), round(float(e[1]), 3), int(e[2]))))
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(p)
+        if len(uniq) >= max_plans:
+            break
+    return uniq
 
 
 def _project_value(obs_any, me):
@@ -770,7 +863,8 @@ def agent(obs, configuration=None):
                     continue
                 solo = {"emit": [[sid, float(a2), size]],
                         "units": units, "srcs": {sid: size},
-                        "rank": rank, "front": front}
+                        "rank": rank, "front": front,
+                        "kind": "enemy" if is_enemy else "neutral", "tid": tid}
                 break
         if solo is not None:
             candidates.append(solo)
@@ -800,7 +894,9 @@ def agent(obs, configuration=None):
             units = units_for(triples)
             if not (units is None and id2slot is not None):
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
-                                   "rank": rank, "front": front})
+                                   "rank": rank, "front": front,
+                                   "kind": "enemy" if is_enemy else "neutral",
+                                   "tid": tid})
 
     # Regroup / defense (default ON; confirmed vs Producer V2): reinforce our own
     # planets that an enemy fleet is bearing down on with enough force to flip --
@@ -843,7 +939,8 @@ def agent(obs, configuration=None):
                     candidates.append({"emit": d_emit, "units": units,
                                        "srcs": d_srcs,
                                        "rank": float(mine.production) * 2.0,
-                                       "front": 0.0})
+                                       "front": 0.0,
+                                       "kind": "defend", "tid": int(mine.id)})
 
     if not candidates:
         return []
@@ -904,21 +1001,27 @@ def agent(obs, configuration=None):
             producer_me = []
         # Levers 2/3 are 4P-only: 2P is our strength and these regress it.
         anytime_on = _anytime() and num_seats >= 4
-        plans = [producer_me, committed_emit, []]   # producer floor first
-        if anytime_on:
-            # Lever 3: spend headroom -- offer every aggression level of the
-            # committed plan, so extra compute becomes more plans evaluated.
-            plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
-        elif len(committed_emit) > 2:
-            # One milder aggression level of my plan for the lookahead to weigh.
-            plans.append(committed_emit[:len(committed_emit) // 2])
-        # De-dup (by repr) preserving order.
-        seen, uniq = set(), []
-        for p in plans:
-            key = repr(p)
-            if key not in seen:
-                seen.add(key)
-                uniq.append(p)
+        if _wide_candidates():
+            # Wide generation: hand the deep search a DIVERSE pool of full-plans to
+            # score, not ~5 variants of one greedy plan (the candidate-breadth lever).
+            uniq = _wide_candidate_plans(candidates, producer_me, committed_emit,
+                                         available, planets, by_id, me)
+        else:
+            plans = [producer_me, committed_emit, []]   # producer floor first
+            if anytime_on:
+                # Lever 3: spend headroom -- offer every aggression level of the
+                # committed plan, so extra compute becomes more plans evaluated.
+                plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
+            elif len(committed_emit) > 2:
+                # One milder aggression level of my plan for the lookahead to weigh.
+                plans.append(committed_emit[:len(committed_emit) // 2])
+            # De-dup (by repr) preserving order.
+            seen, uniq = set(), []
+            for p in plans:
+                key = repr(p)
+                if key not in seen:
+                    seen.add(key)
+                    uniq.append(p)
         try:
             depth = _rollout_depth()
             if depth >= 2:
