@@ -123,6 +123,30 @@ terminal-prod / hold-value hacks.
   a FIXED shortlist is dominated by the deterministic core — the SAME failure
   mode as the bolt-on, one level deeper.
 
+## PROGRESS LOG — making the native agent actually play (2026-06-19)
+Observation-driven iteration after the code-review fix (PI watched games):
+| value functional | wins/40 vs V2 | margin | launches | failure observed |
+|---|---|---|---|---|
+| ownership (post bug-fix) | 0/40 | −1.00 | ~30 | idle (passivity) |
+| + opp-expansion + marginal | 5/40 | −0.75 | churn | leads ownership, bleeds ships |
+| + max-threat | 5/40 | −0.75 | churn | (no aggregate move) |
+| **expected SHIP-MARGIN** | **13/40** | **−0.35** | **218** | (churn gone; gap to base closing) |
+| base bolt-on (reference) | 21/40 | +0.05 | 214 | — |
+
+**Ship-margin reformulation (the breakthrough):** the value optimized
+production-weighted OWNERSHIP, a proxy that diverges from the engine's win
+condition (total ships) in the churn regime — the agent out-produced V2 yet bled
+~12,760 ships/game in thin captures that reflip. Reformulated to EXPECTED
+SHIP-MARGIN (`orbit_lite/native_forward.py`, `PRODUCER_PLUS_NATIVE_VALUE=ships`):
+weight `(P_mine − P_opp)` by per-planet ship count + post-horizon production
+credit (`prod·terminal`), add in-flight ship mass, instantaneous leak (cumulative
+over-penalized dominant garrisons once ship-weighted), discounted mean (ship
+units, matches the 1.5-ship roi floor). Result: churn eliminated (launches
+30→218 = base level), win-rate 5→13/40, margin −0.75→−0.35. Seed 5000 (the close
+loss the PI diagnosed) flipped to a dominant win (30 planets / 996 ships vs 1/2).
+Still below base 21/40 — remaining gap is the next lever (λ/steepness tuning or
+the 15 maps native still loses).
+
 ## ⚠️ ALL RESULTS ABOVE THIS LINE ARE VOID (code-review 2026-06-19)
 A code review found the native scorer threw a shape error on EVERY turn
 (`garrison_status.arrivals_by_owner` is `[P, H+1, A]`; the code derived `H` from
