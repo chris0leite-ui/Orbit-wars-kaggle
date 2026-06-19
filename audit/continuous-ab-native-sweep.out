@@ -59,3 +59,5 @@
   [ 58/240] native_st8    seed=5009 seat=1  loss  margin=-1.000  steps=120 max_ms=404.9  (eta 2250s)
   [ 59/240] base          seed=5010 seat=0  WIN   margin=+1.000  steps=150 max_ms=321.3  (eta 2223s)
   [ 60/240] native_st3    seed=5009 seat=1  loss  margin=-1.000  steps=113 max_ms=275.8  (eta 2218s)
+  [ 61/240] native_t6     seed=5009 seat=1  WIN   margin=+1.000  steps=259 max_ms=356.0  (eta 2192s)
+  [ 62/240] native        seed=5010 seat=0  loss  margin=-1.000  steps=109 max_ms=370.8  (eta 2160s)
