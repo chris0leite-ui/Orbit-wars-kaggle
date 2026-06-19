@@ -464,6 +464,42 @@ def _project_value(obs_any, me):
     return mine - theirs
 
 
+def _project_outcome(obs_any, me):
+    """One garrison projection -> (win, margin). Project the board H turns forward
+    (the producer's strong static evaluator that makes the baseline value
+    expansion correctly), then read PER-PLAYER projected ship totals: `win` =
+    1.0 if I'm projected rank #1, 0.5 if tied for top, else 0.0; `margin` = my
+    projected ships minus the strongest rival's. Used as the leaf of the robust
+    ensemble so the agnostic opponent + rank objective sit on a strong evaluator
+    rather than a crude greedy rollout."""
+    ot = _single_obs_to_tensor(obs_any, player_id=int(me))
+    pc = _largest_initial_player_count(ot)
+    H = PROJECT_HORIZON_4P if int(pc) >= 4 else PROJECT_HORIZON_2P
+    cfg = _MovementConfig(
+        movement_horizon=int(H), drift_epsilon=1e-3, track_fleets=True,
+        player_count=int(pc), max_tracked_fleets=128,
+    )
+    mv = _ensure_planet_movement(obs_tensors=ot, expected_cfg=cfg, cached_movement=None)
+    status = mv.garrison_status(max_horizon=int(H))
+    owner = status.owner[:, int(H)]
+    ships = status.ships[:, int(H)].to(_torch.float32)
+    mine = float((ships * (owner == int(me)).to(_torch.float32)).sum())
+    best_other = 0.0
+    for pl in range(int(pc)):
+        if pl == int(me):
+            continue
+        tot = float((ships * (owner == pl).to(_torch.float32)).sum())
+        if tot > best_other:
+            best_other = tot
+    if mine > best_other:
+        win = 1.0
+    elif mine == best_other:
+        win = 0.5
+    else:
+        win = 0.0
+    return win, (mine - best_other)
+
+
 def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=None,
                  opp_move_fn=None):
     """Pick the candidate full-plan with the best 2-ply value: apply [my plan,
@@ -647,7 +683,7 @@ def _robust():
 
 # Compute bounds + the one risk dial (NOT strategy weights).
 ROBUST_SAMPLES = _i("LR_ROBUST_SAMPLES", 16)   # number of sampled futures
-ROBUST_K = _i("LR_ROBUST_K", 6)                # plies rolled forward per future
+ROBUST_K = _i("LR_ROBUST_K", 14)               # plies rolled forward per future (long enough for expansion to convert to ships)
 ROBUST_QUANTILE = _f("LR_ROBUST_QUANTILE", 0.25)  # average the worst this-fraction (CVaR); ->0 = worst-case, 1 = mean
 ROBUST_TEMP = _f("LR_ROBUST_TEMP", 0.7)        # rival target-sampling temperature (spread)
 ROBUST_MS = _f("LR_ROBUST_MS", 650.0)          # per-turn time budget for the pick
@@ -759,32 +795,36 @@ def _leader_margin(snap, me, num_seats, leader_relative):
     return ours - (max(rivals) if leader_relative else sum(rivals))
 
 
-def _robust_pick(obs, configuration, me, num_seats, candidate_plans,
-                 budget_ms=None):
-    """Pick the candidate plan with the best robust value across an ensemble of
-    sampled futures. All plans share the SAME futures (paired). Returns the
-    chosen plan (env-format launches). Time-guarded; always returns a legal
-    plan (falls back to candidate_plans[0])."""
-    if budget_ms is None:
-        budget_ms = ROBUST_MS
-    obs_d = _as_dict(obs)
-    leader_relative = num_seats >= 4
-    rng = random.Random(_board_seed(obs_d))
-    snap = from_obs(obs, configuration, num_seats=num_seats)
-    opps = [i for i in range(num_seats) if i != int(me)]
+def _winprob_at(snap, me):
+    """Outcome of one future: 1.0 if I have strictly the most ships (rank #1),
+    0.5 if tied for the top, else 0.0. The competition only counts win/loss/draw
+    (margin is ignored), so this is the quantity that actually moves the rating."""
+    tot = ship_totals(snap)
+    mine = tot.get(int(me), 0.0)
+    best_other = max((v for k, v in tot.items() if int(k) != int(me)), default=0.0)
+    if mine > best_other:
+        return 1.0
+    if mine == best_other:
+        return 0.5
+    return 0.0
 
-    # Sample the futures once (shared across candidates). A future = each rival's
-    # move THIS turn (they move simultaneously, blind to my plan -> shared).
-    n_samples = max(1, ROBUST_SAMPLES)
-    futures = []
-    for _ in range(n_samples):
-        futures.append({i: _stochastic_greedy(snap.state[i].observation, rng, ROBUST_TEMP)
-                        for i in opps})
 
+def _make_robust_value(snap, me, num_seats, opps, futures, leader_relative):
+    """Build the `value(plan) -> (win_fraction, mean_margin)` scorer over a fixed
+    set of sampled futures. For each future: apply [my plan, each rival's sampled
+    move] this turn, then roll the tail with RIVALS expanding (cheap greedy) and
+    ME IDLE -- so a capture I make NOW is judged against rivals who keep taking
+    the map, and "I'd grab it later anyway" can't make a real capture look
+    worthless (the passivity trap). `win_fraction` = how often I end up rank #1
+    (the objective: win in the most futures); `mean_margin` (ships vs the leader)
+    is the continuous tie-break only."""
     greedy = lite_greedy_policy
+    use_orbit_leaf = _ORBIT_OK and os.environ.get("LR_ROBUST_LEAF", "orbit").strip().lower() != "rollout"
 
-    def robust_value(plan):
-        vals = []
+    def value(plan):
+        wins = 0.0
+        margin = 0.0
+        n = 0
         for fut in futures:
             s = clone(snap)
             acts = [[] for _ in range(num_seats)]
@@ -792,19 +832,57 @@ def _robust_pick(obs, configuration, me, num_seats, candidate_plans,
             for i in opps:
                 acts[i] = list(fut[i])
             step(s, acts, in_place=True)
-            # Continue the game two-sided: every seat (incl. us) plays the cheap
-            # greedy policy for a few plies, so "do nothing" is correctly punished
-            # (rivals expand) and a plan is judged by where it actually leads.
+            if use_orbit_leaf and not s.fake_env.done:
+                # Strong leaf: the producer's garrison projection from the
+                # post-move position (the evaluator that makes expansion pay).
+                try:
+                    w, m = _project_outcome(s.state[int(me)].observation, me)
+                    wins += w
+                    margin += m
+                    n += 1
+                    continue
+                except Exception:
+                    pass
+            # Fallback leaf: roll the tail with rivals expanding (greedy), me idle.
             for _ in range(max(0, ROBUST_K - 1)):
                 if s.fake_env.done:
                     break
-                a = [greedy(s.state[j].observation) for j in range(num_seats)]
+                a = [[] for _ in range(num_seats)]
+                for j in opps:
+                    a[j] = greedy(s.state[j].observation)
                 step(s, a, in_place=True)
-            vals.append(_leader_margin(s, me, num_seats, leader_relative))
-        vals.sort()
-        # CVaR: average of the worst `quantile` fraction (robust to the tail).
-        m = max(1, int(math.ceil(max(0.0, min(1.0, ROBUST_QUANTILE)) * len(vals))))
-        return sum(vals[:m]) / float(m)
+            wins += _winprob_at(s, me)
+            margin += _leader_margin(s, me, num_seats, leader_relative)
+            n += 1
+        if n == 0:
+            return (0.0, 0.0)
+        return (wins / n, margin / n)
+
+    return value
+
+
+def _sample_futures(snap, me, opps, rng):
+    """Sample `LR_ROBUST_SAMPLES` futures once (shared across candidates so the
+    comparison is paired). A future = each rival's move THIS turn; rivals move
+    simultaneously, blind to my plan, so the sample is shared across my plans."""
+    n_samples = max(1, ROBUST_SAMPLES)
+    return [{i: _stochastic_greedy(snap.state[i].observation, rng, ROBUST_TEMP)
+             for i in opps} for _ in range(n_samples)]
+
+
+def _robust_pick(obs, configuration, me, num_seats, candidate_plans,
+                 budget_ms=None):
+    """Pick the whole candidate plan with the best robust value across the
+    ensemble. Time-guarded; falls back to candidate_plans[0]."""
+    if budget_ms is None:
+        budget_ms = ROBUST_MS
+    obs_d = _as_dict(obs)
+    leader_relative = num_seats >= 4
+    rng = random.Random(_board_seed(obs_d))
+    snap = from_obs(obs, configuration, num_seats=num_seats)
+    opps = [i for i in range(num_seats) if i != int(me)]
+    futures = _sample_futures(snap, me, opps, rng)
+    value = _make_robust_value(snap, me, num_seats, opps, futures, leader_relative)
 
     best_plan, best_v = candidate_plans[0], None
     t0 = time.perf_counter()
@@ -812,12 +890,73 @@ def _robust_pick(obs, configuration, me, num_seats, candidate_plans,
         if best_v is not None and (time.perf_counter() - t0) * 1000.0 > budget_ms:
             break
         try:
-            v = robust_value(plan)
+            v = value(plan)                  # (win_fraction, mean_margin); tuple compare
         except Exception:
             continue
         if best_v is None or v > best_v:
             best_v, best_plan = v, plan
     return best_plan
+
+
+def _robust_impact_pick(obs, configuration, me, num_seats, committed_caps,
+                        budget_ms=None):
+    """Impact-filtered robust pick. Build the emitted plan ONE CAPTURE AT A TIME,
+    accepting a capture only if it improves the robust (CVaR) ship-margin across
+    the sampled futures by at least the meaningful-impact floor (LR_ROBUST_IMPACT,
+    in ships). A capture whose fleet is too small, too far (arrives after the
+    simulation window), or redundant does not move the simulated outcome, so it
+    is dropped; idle is the default when nothing clears the floor. This is the
+    modelling-correct way to "avoid fleet sending without meaningful impact" --
+    impact is measured by simulation, not by a hard size/distance cap. Captures
+    are kept whole (gang-up launches stay together), never split into ineffective
+    fragments. Returns env-format launches; time-guarded."""
+    if budget_ms is None:
+        budget_ms = ROBUST_MS
+    obs_d = _as_dict(obs)
+    leader_relative = num_seats >= 4
+    rng = random.Random(_board_seed(obs_d))
+    snap = from_obs(obs, configuration, num_seats=num_seats)
+    opps = [i for i in range(num_seats) if i != int(me)]
+    futures = _sample_futures(snap, me, opps, rng)
+    value = _make_robust_value(snap, me, num_seats, opps, futures, leader_relative)
+
+    # A capture is kept only if it MEANINGFULLY improves the outcome: it wins at
+    # least `win_floor` more of the futures, OR (when the win-fraction is tied)
+    # it improves the ship-margin tie-break by at least `margin_floor`. Tiny /
+    # far / redundant captures move neither, so they're dropped; idle is the
+    # default. This is "win in more futures" turned into an accept test.
+    win_floor = _f("LR_ROBUST_WIN_FLOOR", 0.03)      # fraction of futures (~half a future at N=16)
+    margin_floor = _f("LR_ROBUST_MARGIN_FLOOR", 8.0)  # ships, tie-break only
+
+    def better(new, cur):
+        wn, mn = new
+        wc, mc = cur
+        if wn - wc > win_floor:
+            return True
+        if wc - wn > win_floor:
+            return False
+        return mn > mc + margin_floor                 # win-fraction tied -> need real ship gain
+
+    plan = []
+    try:
+        cur_v = value(plan)                          # outcome of doing nothing
+    except Exception:
+        return []
+    t0 = time.perf_counter()
+    for cap in committed_caps:
+        if (time.perf_counter() - t0) * 1000.0 > budget_ms:
+            break
+        emit = cap.get("emit") or []
+        if not emit:
+            continue
+        try:
+            v = value(plan + emit)
+        except Exception:
+            continue
+        if better(v, cur_v):                          # capture must win more futures (or clearly gain ships)
+            plan = plan + emit
+            cur_v = v
+    return plan
 
 
 # --------------------------------------------------------------------------
@@ -1046,6 +1185,7 @@ def agent(obs, configuration=None):
     # ---- greedy plan construction by projected value ----
     committed_emit = []
     committed_units = []
+    committed_caps = []                  # accepted captures (kept whole) for the robust impact filter
     avail = dict(available)
     if orbit is not None:
         current = 0.0                       # score of the empty plan
@@ -1082,6 +1222,7 @@ def agent(obs, configuration=None):
         if v > current + floor:
             committed_emit = committed_emit + c["emit"]
             committed_units = committed_units + (c["units"] or [])
+            committed_caps.append(c)
             current = v
             for s, sz in c["srcs"].items():
                 avail[s] = avail.get(s, 0) - sz
@@ -1113,9 +1254,16 @@ def agent(obs, configuration=None):
                 uniq.append(p)
         try:
             if _robust():
-                # Opponent-agnostic robust-ensemble pick (default OFF). Replaces
-                # the producer-mirror lookahead with a distribution of sampled
-                # futures + a robust (CVaR) selection over them.
+                # Opponent-agnostic robust-ensemble pick (default OFF). Score each
+                # candidate plan across sampled-opponent futures with the strong
+                # garrison-projection leaf, objective = win in the most futures
+                # (rank #1). LR_ROBUST_FILTER=1 instead builds the plan
+                # capture-by-capture, dropping captures that don't move the
+                # outcome (no small/far/low-impact sends).
+                if _i("LR_ROBUST_FILTER", 0) >= 1:
+                    return _robust_impact_pick(obs, configuration, me, num_seats,
+                                               committed_caps,
+                                               budget_ms=_robust_budget(obs_d))
                 return _robust_pick(obs, configuration, me, num_seats, uniq,
                                     budget_ms=_robust_budget(obs_d))
             depth = _rollout_depth()
