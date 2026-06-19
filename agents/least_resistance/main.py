@@ -273,19 +273,20 @@ def _hold_search_range():
 
 
 def _dropout():
-    """Dropout-risk leaf term (default 0 = OFF, byte-identical). When ON,
-    `_project_value` blends its clean horizon value with a PESSIMIST value in
-    which each planet WE hold at the horizon is contested toward the strongest
-    rival in proportion to the enemy mass that can REACH it vs our garrison there.
-    Over-aggression (a thin source after launching) and over-extension (a far
-    capture the rival can reach) lower the value on their own -- attack-selectivity
-    emerges, no hard force/timing rule. Mean-field, no RNG -> CPU/GPU bit-parity."""
+    """Dropout-risk rollout penalty (default 0 = OFF, byte-identical). When ON,
+    each candidate plan's leaf value is docked a MARGINAL penalty for the exposure
+    *this turn's action* creates: planets it CAPTURES that stay reachable by the
+    strongest rival ("attack far -> it falls back"), and sources it STRIPS thin
+    ("attack -> garrison falls -> flip"). The standing frontier (planets we already
+    held and did not weaken) is NOT penalised -- so over-extension/over-aggression
+    self-penalise without making us passive. Deterministic, no RNG. Mirrors the
+    producer_plus per-capture reflip rather than a blanket state penalty."""
     return _i("LR_DROPOUT", 0) >= 1
 
 
 def _dropout_weight():
-    """Temper on the contest-ratio blend (default 0.5; mirrors producer_plus).
-    value = (1 - eff_w)*clean + eff_w*pessimist, eff_w = weight * position-contest."""
+    """Scale on the marginal exposure penalty (default 0.5). leaf_value -=
+    weight * (captured-exposure + stripped-source-exposure), in ship units."""
     return _f("LR_DROPOUT_WEIGHT", 0.5)
 
 
@@ -503,39 +504,7 @@ def _project_value(obs_any, me):
                 theirs = tot
     else:
         theirs = float((ships * ((owner != int(me)) & (owner >= 0)).to(_torch.float32)).sum())
-    clean = mine - theirs
-    if not _dropout():
-        return clean
-    # --- mean-field dropout risk (default-OFF above) -----------------------
-    # Contest each planet we hold at the horizon toward the strongest rival, in
-    # proportion to the enemy mass that can REACH it vs our garrison there, then
-    # blend clean <-> pessimist. A stripped source garrison (after launching) or
-    # a far capture the rival can reach raises the contest and lowers value.
-    fdt = _torch.float32
-    mine_mask = (owner == int(me)).to(fdt)
-    rival, rival_tot = -1, 0.0
-    for pl in range(int(pc)):                          # deterministic first-max
-        if pl == int(me):
-            continue
-        tot = float((ships * (owner == pl).to(fdt)).sum())
-        if tot > rival_tot:
-            rival_tot, rival = tot, pl
-    if rival < 0 or rival_tot <= 0.0:
-        return clean                                   # no living rival -> no risk
-    enemy_src = ships * (owner == rival).to(fdt)       # [P] rival garrison mass
-    coords = _torch.stack((mv.x[int(H)].to(fdt), mv.y[int(H)].to(fdt)), dim=1)
-    dmat = _torch.cdist(coords, coords)                # [P,P] horizon distances
-    ref_speed = max(1e-6, float(fleet_speed(FRONTIER_REF_SHIPS)))
-    reach = (dmat / ref_speed) <= (float(int(H)) + _dropout_reach_pad())
-    reach_mass = (reach.to(fdt) * enemy_src.unsqueeze(0)).sum(dim=1)   # E_i [P]
-    eps = 1e-6
-    contest = reach_mass / (reach_mass + ships + eps)  # c_i in [0,1)
-    contested_ships = float((ships * mine_mask * contest).sum())
-    pessimist = clean - 2.0 * contested_ships          # ship leaves mine, joins rival
-    e_total = float((reach_mass * mine_mask).sum())
-    contest_pos = e_total / (e_total + mine + eps)     # mine == our held total
-    eff_w = min(1.0, max(0.0, _dropout_weight() * contest_pos))
-    return (1.0 - eff_w) * clean + eff_w * pessimist
+    return mine - theirs
 
 
 def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=None,
@@ -554,6 +523,14 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=N
     # Every opponent's predicted move this turn; shared across candidates since
     # moves are simultaneous (they don't see my plan). 2P (one opp) and 4P (three).
     opp_now = {i: opp_move_fn(snap.state[i].observation, i) for i in opps}
+    drop_on = _dropout()
+    pre_owned, pre_ships = _dropout_prestate(obs, me) if drop_on else (None, None)
+
+    def _leaf(leaf_obs):
+        v = _project_value(leaf_obs, me)
+        if drop_on:
+            v -= _dropout_penalty(leaf_obs, me, pre_owned, pre_ships, num_seats)
+        return v
 
     def value(plan):
         s = clone(snap)
@@ -571,7 +548,7 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=N
                 nxt[i] = opp_move_fn(s.state[i].observation, i)
             step(s, nxt, in_place=True)
         try:
-            return _project_value(s.state[int(me)].observation, me)
+            return _leaf(s.state[int(me)].observation)
         except Exception:
             return None
 
@@ -605,6 +582,14 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
     snap = from_obs(obs, configuration, num_seats=num_seats)
     opps = [i for i in range(num_seats) if i != int(me)]
     opp_now = {i: opp_move_fn(snap.state[i].observation, i) for i in opps}
+    drop_on = _dropout()
+    pre_owned, pre_ships = _dropout_prestate(obs, me) if drop_on else (None, None)
+
+    def _leaf(leaf_obs):
+        v = _project_value(leaf_obs, me)
+        if drop_on:
+            v -= _dropout_penalty(leaf_obs, me, pre_owned, pre_ships, num_seats)
+        return v
 
     def rollout_value(plan):
         s = clone(snap)
@@ -620,7 +605,7 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
                    for i in range(num_seats)]
             step(s, nxt, in_place=True)
         try:
-            return _project_value(s.state[int(me)].observation, me)
+            return _leaf(s.state[int(me)].observation)
         except Exception:
             return None
 
@@ -653,7 +638,7 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
                            for i in range(num_seats)]
                     step(s, nxt, in_place=True)      # extend one ply
                 try:
-                    v = _project_value(s.state[int(me)].observation, me)
+                    v = _leaf(s.state[int(me)].observation)
                 except Exception:
                     v = None
                 if v is not None and (level_best_v is None or v > level_best_v):
@@ -762,6 +747,61 @@ def _hold_search_plans(committed_emit, avail, my_planets, fleets, me,
             if reinforce:
                 out.append(list(committed_emit) + reinforce)
     return out
+
+
+def _dropout_prestate(obs_any, me):
+    """Snapshot which planets we own and their garrisons BEFORE our move, so the
+    rollout penalty can charge only the exposure our action creates this turn."""
+    d = _as_dict(obs_any)
+    planets = d.get("planets", []) or []
+    owned, ships = set(), {}
+    for p in planets:
+        if int(p[1]) == int(me):
+            owned.add(int(p[0]))
+            ships[int(p[0])] = float(p[5])
+    return owned, ships
+
+
+def _dropout_penalty(leaf_obs, me, pre_owned, pre_ships, num_seats):
+    """Marginal exposure penalty (>=0) for a candidate plan, read off the rollout
+    leaf. Charges, in ship units scaled by _dropout_weight(): (a) planets we now
+    hold that we did NOT own pre-move (captures) and that the strongest rival can
+    still REACH within the horizon -> far/over-extended captures; (b) planets we
+    owned pre-move whose garrison FELL (sources we stripped) and are rival-
+    reachable -> over-aggression. The standing, un-weakened frontier is untouched."""
+    d = _as_dict(leaf_obs)
+    planets = d.get("planets", []) or []
+    rows = [(int(p[0]), int(p[1]), float(p[2]), float(p[3]), float(p[5]))
+            for p in planets]
+    tot = {}
+    for _pid, o, _x, _y, sh in rows:
+        if o != int(me) and o >= 0:
+            tot[o] = tot.get(o, 0.0) + sh
+    if not tot:
+        return 0.0
+    rival = max(tot.items(), key=lambda kv: (kv[1], -kv[0]))[0]  # deterministic
+    rival_planets = [(x, y, sh) for _pid, o, x, y, sh in rows if o == rival]
+    if not rival_planets:
+        return 0.0
+    H = PROJECT_HORIZON_4P if int(num_seats) >= 4 else PROJECT_HORIZON_2P
+    ref = max(1e-6, float(fleet_speed(FRONTIER_REF_SHIPS)))
+    budget = (float(int(H)) + _dropout_reach_pad()) * ref
+    eps, pen = 1e-6, 0.0
+    for pid, o, x, y, sh in rows:
+        if o != int(me):
+            continue
+        reach = sum(q for (qx, qy, q) in rival_planets
+                    if dist((x, y), (qx, qy)) <= budget)
+        if reach <= 0.0:
+            continue
+        contest = reach / (reach + sh + eps)
+        if pid not in pre_owned:
+            pen += contest * sh                       # captured & still exposed
+        else:
+            drop = pre_ships.get(pid, sh) - sh
+            if drop > 0.0:
+                pen += contest * drop                 # source we stripped, exposed
+    return _dropout_weight() * pen
 
 
 # --------------------------------------------------------------------------
