@@ -111,14 +111,23 @@ def reachable_enemy_mass(
     ships: Tensor,        # [P] float (current garrison)
     is_enemy: Tensor,     # [P] bool
     H: int,
+    aggregate: str = "max",
 ) -> Tensor:
     """Enemy mass physically routable to each planet by step k -> ``[P, H+1]``.
 
     Enemy planet q can reach target p arriving at step k by launching now if
     ``dist(q@0, p@k) <= k · speed(q)``. Once reachable it stays reachable, so the
-    result is cumulative (non-decreasing) in k. The attacker reservoir is the
-    enemy's CURRENT ships (a conservative mean-field reservoir; Phase B/C can
-    grow it with production)."""
+    result is cumulative (non-decreasing) in k.
+
+    ``aggregate`` decides how multiple reachable enemy sources combine into the
+    threat on one target:
+    - ``"max"`` (default): the STRONGEST single reachable enemy planet. This is
+      the realistic concentrated threat — one enemy launches a decisive fleet.
+      SUM (below) over-counts catastrophically: it assumes the WHOLE enemy army
+      hits every one of my planets at once, so each frontier planet looks ~doomed
+      (garrison 50 vs "threat" 340), a partial reinforcement can never help, and
+      the agent abandons its planets -> the observed mid-game passivity/collapse.
+    - ``"sum"``: total reachable enemy mass (the old over-pessimistic behaviour)."""
     K = int(cross_dist.shape[0]) - 1
     P = int(ships.shape[0])
     device = ships.device
@@ -129,15 +138,16 @@ def reachable_enemy_mass(
     enemy_mass = torch.where(is_enemy, ships, torch.zeros_like(ships))  # [P]
 
     out = torch.zeros(P, H + 1, dtype=fdtype, device=device)
-    # k = 0: nothing can have arrived yet.
     reachable_any = torch.zeros(P, P, dtype=torch.bool, device=device)  # [src, tgt]
     for k in range(1, Hc + 1):
         d_k = cross_dist[k]                                    # [src, tgt] dist(s@0, t@k)
         reach_k = d_k <= (float(k) * speed.view(P, 1))         # [src, tgt]
         reachable_any = reachable_any | reach_k
-        # mass at tgt = sum over enemy sources that can reach tgt by now
-        mass_t = (reachable_any.to(fdtype) * enemy_mass.view(P, 1)).sum(dim=0)  # [tgt]
-        out[:, k] = mass_t
+        masked = reachable_any.to(fdtype) * enemy_mass.view(P, 1)  # [src, tgt]
+        if aggregate == "sum":
+            out[:, k] = masked.sum(dim=0)
+        else:
+            out[:, k] = masked.max(dim=0).values              # strongest single source
     for k in range(Hc + 1, H + 1):
         out[:, k] = out[:, Hc]  # horizon beyond the distance cache: hold last
     return out
