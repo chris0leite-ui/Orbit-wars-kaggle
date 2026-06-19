@@ -123,14 +123,23 @@ terminal-prod / hold-value hacks.
   a FIXED shortlist is dominated by the deterministic core — the SAME failure
   mode as the bolt-on, one level deeper.
 
-## VERDICT — Phase A kill-gate FAILED (thesis refuted as scoped)
-The mean-field flip-hazard forward model, scoring the producer's existing
-shortlist, does NOT beat the static one-ply scorer (19/40 vs 21/40), and the
-hazard distribution is provably inert for ranking (steepness and
-instantaneous-vs-cumulative change nothing in games). Per this doc's own
-kill-gate ("if a distribution-aware forward model scoring the SAME candidates
-does not beat the static scorer, the thesis is wrong — stop"), the dropout-native
-thesis is refuted **as scoped in Phase A**.
+## ⚠️ ALL RESULTS ABOVE THIS LINE ARE VOID (code-review 2026-06-19)
+A code review found the native scorer threw a shape error on EVERY turn
+(`garrison_status.arrivals_by_owner` is `[P, H+1, A]`; the code derived `H` from
+it as `[P, H, A]` → reshape RuntimeError), silently swallowed by
+`except Exception: pass`. Instrumentation: ENTERED 440 / SUCCEEDED 0 — native
+NEVER ran. So every "native 19/40 / hazard inert / steepness-identical /
+cumulative≡instantaneous" result above measured the STATIC scorer with the
+dropout bolt-on OFF (which differs from base only by the bolt-on — explaining the
+15-map gap, and why steepness/cumulative did nothing). FIXED (strip the k=0
+frame; ENTERED 499 / SUCCEEDED 499; play changes). Plus correctness fixes
+(clamp source debit; zero hazard where unreachable; guard native+dropout blend).
+Kill-gate RE-RUN with the native scorer actually executing — REAL verdict below.
+
+[old VOID verdict, retained for the record:]
+~~The mean-field flip-hazard forward model ... does NOT beat the static one-ply
+scorer (19/40 vs 21/40), and the hazard distribution is provably inert ...~~
+(VOID — the model never executed.)
 
 What would be required to make the distribution load-bearing for RANKING (NOT
 funded without a fresh PI decision — these are big builds the doc gated behind a
