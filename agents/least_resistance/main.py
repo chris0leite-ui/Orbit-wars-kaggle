@@ -226,6 +226,25 @@ def _rollout_depth():
     return _i("LR_ROLLOUT_DEPTH", 0)
 
 
+def _deep_opp():
+    """Per-node opponent model for the search rollouts (_twoply_pick/_deep_pick).
+    0 = producer mirror (accurate, ~10-50ms/call -- the per-node bottleneck);
+    1 = lite_greedy (cheap, ~1-2ms, still models expansion) so deeper search
+    fits the 1000ms wall. Default 0 keeps current behaviour byte-identical."""
+    return _i("LR_DEEP_OPP", 0)
+
+
+def _opponent_move_fn(tier=None):
+    """Return a callable (obs, seat) -> [[src,angle,ships],...] for the per-node
+    opponent move, matching _producer_move_obs' signature. lite_greedy reads the
+    seat from obs.player, so the seat arg is ignored for it."""
+    if tier is None:
+        tier = _deep_opp()
+    if int(tier) == 1:
+        return lambda obs_any, seat: lite_greedy_policy(obs_any)
+    return _producer_move_obs
+
+
 def _deep_budget(obs_d):
     """Per-turn budget (ms) for deep rollout search. Draws a self-limiting slice
     of the episode overage bank (obs.remainingOverageTime) so pivotal turns can
@@ -426,19 +445,22 @@ def _project_value(obs_any, me):
     return mine - theirs
 
 
-def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=None):
+def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=None,
+                 opp_move_fn=None):
     """Pick the candidate full-plan with the best 2-ply value: apply [my plan,
-    producer's predicted reply] this turn, then a turn of producer-vs-producer,
+    opponent's predicted reply] this turn, then a turn of opponent pressure,
     then score the resulting position. `candidate_plans` always includes the
-    producer's own move (the >=-producer floor). Returns the chosen plan."""
+    producer's own move (the >=-producer floor). Returns the chosen plan. The
+    per-node opponent is `opp_move_fn` (default: the LR_DEEP_OPP selection)."""
     if budget_ms is None:
         budget_ms = TWOPLY_BUDGET_MS
+    if opp_move_fn is None:
+        opp_move_fn = _opponent_move_fn()
     snap = from_obs(obs, configuration, num_seats=num_seats)
     opps = [i for i in range(num_seats) if i != int(me)]
-    # Every opponent's predicted move this turn (each modelled as the producer);
-    # shared across candidates since moves are simultaneous (they don't see my
-    # plan). Works for 2P (one opponent) and 4P (three opponents).
-    opp_now = {i: _producer_move_obs(snap.state[i].observation, i) for i in opps}
+    # Every opponent's predicted move this turn; shared across candidates since
+    # moves are simultaneous (they don't see my plan). 2P (one opp) and 4P (three).
+    opp_now = {i: opp_move_fn(snap.state[i].observation, i) for i in opps}
 
     def value(plan):
         s = clone(snap)
@@ -453,7 +475,7 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=N
             # 1-ply scorer misses).
             nxt = [[] for _ in range(num_seats)]
             for i in opps:
-                nxt[i] = _producer_move_obs(s.state[i].observation, i)
+                nxt[i] = opp_move_fn(s.state[i].observation, i)
             step(s, nxt, in_place=True)
         try:
             return _project_value(s.state[int(me)].observation, me)
@@ -473,19 +495,23 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=N
     return best_plan
 
 
-def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget_ms=None):
-    """Deeper search vs a fixed-policy opponent (the producer). For each candidate
-    first-move, roll the game out `depth` turns -- turn 1 = my move + each
-    opponent's producer reply; turns 2..depth = EVERY seat (incl. me) plays the
-    producer -- then score with the analytic leaf. Plans are tried in the given
-    (value-ranked) order; best-so-far kept; time-guarded (anytime-safe). Modelling
-    opponents AS the producer is exact for the 'beat the producer' goal, and the
-    producer's own move is always among `candidate_plans` (>=-producer floor)."""
+def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget_ms=None,
+               opp_move_fn=None):
+    """Deeper search vs a fixed-policy opponent. For each candidate first-move,
+    roll the game out `depth` turns -- turn 1 = my move + each opponent's reply;
+    turns 2..depth = EVERY seat (incl. me) plays the opponent policy -- then score
+    with the analytic leaf. Plans are tried in the given (value-ranked) order;
+    best-so-far kept; time-guarded (anytime-safe). The per-node opponent is
+    `opp_move_fn` (default: the LR_DEEP_OPP selection -- producer mirror, or the
+    cheap lite_greedy so deeper search fits the wall). The producer's own move is
+    always among `candidate_plans` (>=-producer floor)."""
     if budget_ms is None:
         budget_ms = TWOPLY_BUDGET_MS
+    if opp_move_fn is None:
+        opp_move_fn = _opponent_move_fn()
     snap = from_obs(obs, configuration, num_seats=num_seats)
     opps = [i for i in range(num_seats) if i != int(me)]
-    opp_now = {i: _producer_move_obs(snap.state[i].observation, i) for i in opps}
+    opp_now = {i: opp_move_fn(snap.state[i].observation, i) for i in opps}
 
     def rollout_value(plan):
         s = clone(snap)
@@ -497,7 +523,7 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
         for _ in range(max(0, int(depth) - 1)):
             if s.fake_env.done:
                 break
-            nxt = [_producer_move_obs(s.state[i].observation, i)
+            nxt = [opp_move_fn(s.state[i].observation, i)
                    for i in range(num_seats)]
             step(s, nxt, in_place=True)
         try:
