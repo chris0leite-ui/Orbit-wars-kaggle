@@ -54,6 +54,16 @@ import random
 import sys
 import time
 
+# ---- SUBMISSION BAKE (PI 2026-06-20) -------------------------------------
+# Ship the native ship-margin leaf + reinforcement-race holdability as the
+# default for this submission. Gates still read os.environ at call time, so an
+# explicit env var overrides this (e.g. LR_NATIVE_LEAF=0 reverts to the
+# ship-count leaf). Remove this block to restore the default-OFF live path.
+os.environ.setdefault("LR_NATIVE_LEAF", "1")
+os.environ.setdefault("LR_NATIVE_REINFORCE", "1")
+# (LR_SKIP_COMETS already defaults to 1.)
+# --------------------------------------------------------------------------
+
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from lib.geometry import dist, path_clears_sun
