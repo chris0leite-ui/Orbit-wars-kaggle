@@ -48,6 +48,10 @@ DEFAULT_LIB_ORDER = [
     "combat",
     "world_model",
     "intent",
+    # kinematic_table: lazy-imported by trajectory.py's table path (depends only
+    # on geometry + orbit, both above). Must precede trajectory so the inlined
+    # `get_default` symbol is visible; the bundler strips the lib import.
+    "kinematic_table",
     "trajectory",
     "mechanism",
     "mission",
