@@ -219,6 +219,18 @@ def _native_reinforce():
         "1", "true", "on", "yes")
 
 
+def _native_dynamic():
+    """Default-OFF gate (PI 2026-06-20, 'see the opponent coming'). With the native
+    leaf, make the enemy threat AND our reinforcement DYNAMIC over the whole
+    look-ahead: at each step use the projected garrison at that step (which already
+    lands in-flight fleets + accrues production) as the per-source mass, instead of a
+    single frozen near-step snapshot. So an opponent building up / arriving later in
+    the horizon becomes visible, and the reinforcement-race correctly flags captures
+    we'll lose. OFF = the frozen-snapshot path. Read at call time."""
+    return os.environ.get("LR_NATIVE_DYNAMIC", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _wallclock_ms():
     """Per-turn budget, read at CALL time. The bundle parity gate sets
     ORBIT_WARS_PARITY_WALLCLOCK_MS huge so the greedy loop never bails
@@ -675,6 +687,10 @@ def _native_value(obs_any, me):
         # conserved contest.
         k_ref = min(int(H), _i("LR_NATIVE_REINF_STEP", 3))
         ships_ref = ships_traj[0, :, k_ref].to(_torch.float32)
+        # Dynamic threat ("see the opponent coming"): per-step projected garrison as
+        # the source mass, so the threat/reinforcement rises over the horizon as the
+        # opponent (and we) build up, instead of the frozen k_ref snapshot.
+        dyn_mbs = ships_traj[0].to(_torch.float32) if _native_dynamic() else None
         atk_reach = _nf_reach_mass(
             cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
             H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
@@ -683,6 +699,7 @@ def _native_value(obs_any, me):
             alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
             alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5),
             alloc_eps=_f("LR_ALLOC_EPS", 1.0),
+            mass_by_step=dyn_mbs,
         )
     else:
         atk_reach = _nf_reach_mass(
@@ -728,6 +745,7 @@ def _native_value(obs_any, me):
             alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5),
             alloc_eps=_f("LR_ALLOC_EPS", 1.0),
             target_mask=is_mine_d, exclude_self=True,
+            mass_by_step=dyn_mbs,
         )
         def_weight = _f("LR_NATIVE_DEF_W", 1.0)
     val = _nf_hazard_value(

@@ -126,6 +126,7 @@ def reachable_enemy_mass(
     alloc_eps: float = 1.0,       # allocate: numerical floor for logs / prox denom
     target_mask: Tensor | None = None,  # [P] bool valid targets (allocate; default=~is_enemy)
     exclude_self: bool = False,   # allocate: mask the source==target diagonal
+    mass_by_step: Tensor | None = None,  # [P, H+1] per-step source mass (dynamic threat)
 ) -> Tensor:
     """Enemy mass physically routable to each planet by step k -> ``[P, H+1]``.
 
@@ -202,9 +203,17 @@ def reachable_enemy_mass(
         d_k = cross_dist[k]                                    # [src, tgt] dist(s@0, t@k)
         reach_k = d_k <= (float(k) * speed.view(P, 1))         # [src, tgt]
         reachable_any = reachable_any | reach_k
-        # per-source mass at step k: current garrison + production accrued (damped).
-        mass_k = (enemy_mass + enemy_prod * (float(growth_alpha) * float(k))
-                  if grow else enemy_mass)                     # [P]
+        # per-source mass at step k. DYNAMIC ("see the opponent coming", PI
+        # 2026-06-20): when `mass_by_step` is given, use the PROJECTED garrison at
+        # step k (which already lands in-flight fleets + accrues production) so the
+        # threat/reinforcement RISES as the opponent builds up / approaches, instead
+        # of a frozen early snapshot. Else: the frozen snapshot [+ damped growth].
+        if mass_by_step is not None:
+            mass_k = torch.where(is_enemy, mass_by_step[:, k].to(fdtype),
+                                 torch.zeros_like(ships))        # [P]
+        else:
+            mass_k = (enemy_mass + enemy_prod * (float(growth_alpha) * float(k))
+                      if grow else enemy_mass)                  # [P]
         if allocate:
             # Reach slack at step k (>=0 where reachable). Softmax per SOURCE over
             # the non-enemy planets it can reach; invalid targets masked to -inf.
