@@ -291,8 +291,9 @@ def _twoply_budget(obs_d):
 def _value_commit():
     """Fundamental gate (default OFF, both modes): commit captures in order of
     their VALUE under the objective (highest win-equity first) rather than
-    cheapness -- scoring each candidate once with spare compute."""
-    return os.environ.get("LR_VALUE_COMMIT", "0").strip().lower() in (
+    cheapness -- scoring each candidate once with spare compute.
+    `LR_CONCENTRATE` turns this on as one of its additive levers."""
+    return _concentrate() or os.environ.get("LR_VALUE_COMMIT", "0").strip().lower() in (
         "1", "true", "on", "yes")
 
 
@@ -343,8 +344,9 @@ def _decisive_capture():
     the strongest enemy force that can reach it by ~our arrival (the contest) -- a
     bigger fleet is also FASTER (fleet speed grows with size), so it wins the race and
     holds, like the opponent's single big strike. Falls back to the minimal solo/gang
-    when no single source can field it (no forced passivity). Read at call time."""
-    return os.environ.get("LR_DECISIVE_CAPTURE", "0").strip().lower() in (
+    when no single source can field it (no forced passivity). Read at call time.
+    `LR_CONCENTRATE` turns this on as one of its additive levers."""
+    return _concentrate() or os.environ.get("LR_DECISIVE_CAPTURE", "0").strip().lower() in (
         "1", "true", "on", "yes")
 
 
@@ -1596,38 +1598,22 @@ def agent(obs, configuration=None):
             producer_me = []
         # Levers 2/3 are 4P-only: 2P is our strength and these regress it.
         anytime_on = _anytime() and num_seats >= 4
-        if _native_leaf() and _concentrate():
-            # CONCENTRATED MENU (PI 2026-06-20 redesign): offer the leaf only idle +
-            # the top-1..m VALUE-ORDERED objectives -- no scattered producer floor, no
-            # full committed set. The emitted move is then at most m best objectives
-            # (or idle/hold), concentrated by construction; the leaf chooses how many.
-            m = max(1, _i("LR_CONC_MAX_OBJ", 3))
-            cap_scored = []
-            for c in committed_caps:
-                if c.get("units") is not None and (time.perf_counter() - t0) * 1000.0 <= budget_ms:
-                    cap_scored.append((score_units(c["units"]), c))
-                else:
-                    cap_scored.append((float("-inf"), c))
-            cap_scored.sort(key=lambda e: -e[0])      # best objective first
-            plans = [[]]                               # idle / hold / bank
-            acc = []
-            for _, c in cap_scored[:m]:
-                acc = acc + c["emit"]
-                plans.append(list(acc))               # top-1, top-2, ... top-m
-        else:
-            plans = [producer_me, committed_emit, []]   # producer floor first
-            if _native_leaf() and len(committed_emit) > 1:
-                # Offer every CONCENTRATION level (1..n-1 launches) so the native
-                # ship-margin leaf can keep only the captures that hold and drop the
-                # scattered tail the flip hazard says the opponent retakes.
-                plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
-            elif anytime_on:
-                # Lever 3: spend headroom -- offer every aggression level of the
-                # committed plan, so extra compute becomes more plans evaluated.
-                plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
-            elif len(committed_emit) > 2:
-                # One milder aggression level of my plan for the lookahead to weigh.
-                plans.append(committed_emit[:len(committed_emit) // 2])
+        plans = [producer_me, committed_emit, []]   # producer floor first
+        if _native_leaf() and len(committed_emit) > 1:
+            # Offer every CONCENTRATION level (1..n-1 launches) so the native
+            # ship-margin leaf can keep only the captures that hold and drop the
+            # scattered tail the flip hazard says the opponent retakes. Under
+            # LR_CONCENTRATE these prefixes are VALUE-ordered (best-first) and the
+            # captures DECISIVE (big fast fleets), so the leaf has strong concentrated
+            # options to prefer -- WITHOUT removing the producer floor (anti-passivity).
+            plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
+        elif anytime_on:
+            # Lever 3: spend headroom -- offer every aggression level of the
+            # committed plan, so extra compute becomes more plans evaluated.
+            plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
+        elif len(committed_emit) > 2:
+            # One milder aggression level of my plan for the lookahead to weigh.
+            plans.append(committed_emit[:len(committed_emit) // 2])
         # De-dup (by repr) preserving order.
         seen, uniq = set(), []
         for p in plans:
