@@ -305,12 +305,14 @@ def _deep_opp():
 
 
 def _skip_comets():
-    """Skip COMET targets in candidate generation (default 0 = target them, as
-    today). ON because comet intercept (aim_comet) can mis-predict on a moving
-    target and there is no oob/accuracy guard, so a missed comet shot sails
-    off-board (wasted). Temporary: disable comet targeting until the comet aim
-    is fixed."""
-    return _i("LR_SKIP_COMETS", 0) >= 1
+    """Skip COMET targets in candidate generation (default 1 = skip; PI 2026-06-20).
+    Comet intercept (aim_comet) can mis-predict on a moving target and there is no
+    oob/accuracy guard (`_sun_clear` only checks the sun, not the board edge), so a
+    missed comet shot sails off-board -- a wasted fleet the PI spotted in a replay.
+    Verified neutral on the live path (no outcome change on the tested seeds, fewer
+    launches). Temporary: target comets again (LR_SKIP_COMETS=0) once the comet aim
+    has an out-of-bounds guard."""
+    return _i("LR_SKIP_COMETS", 1) >= 1
 
 
 def _iterdeepen():
