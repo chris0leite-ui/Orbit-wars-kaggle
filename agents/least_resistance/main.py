@@ -348,26 +348,6 @@ def _decisive_capture():
         "1", "true", "on", "yes")
 
 
-def _concentrate():
-    """Default-OFF master gate (PI 2026-06-20): the CONCENTRATION ENGINE. Changes the
-    decision unit from 'greedily launch every small profitable attack each turn' to
-    'throw decisive concentrated force at the few best objectives; when nothing
-    decisive is affordable, hold and accumulate.' Enables four coupled pieces
-    (coordinated strike / value-ranked objectives / banking / defense + complacency
-    fix). OFF = byte-identical. Read at call time."""
-    return os.environ.get("LR_CONCENTRATE", "0").strip().lower() in (
-        "1", "true", "on", "yes")
-
-
-def _conc_piece(name):
-    """Per-piece sub-gate of the concentration engine. Unset -> follows the master
-    `_concentrate()`; set explicitly -> overrides (for A/B isolation)."""
-    v = os.environ.get(name)
-    if v is None:
-        return _concentrate()
-    return v.strip().lower() in ("1", "true", "on", "yes")
-
-
 def _iterdeepen():
     """Anytime iterative deepening for the deep rollout (default 0 = OFF, fixed
     depth). When ON, _deep_pick deepens d=1..LR_ROLLOUT_DEPTH within the timebox,
@@ -779,16 +759,6 @@ def _native_value(obs_any, me):
             mass_by_step=dyn_mbs,
         )
         def_weight = _f("LR_NATIVE_DEF_W", 1.0)
-        if _concentrate():
-            # Complacency fix (Piece 4b, concentration engine): a planet whose enemy
-            # attack-reach already exceeds its own projected garrison is EXPOSED --
-            # drop its potential-reinforcement credit so the leaf stops treating it as
-            # pre-defended. Reinforcing then becomes a positive, chosen action
-            # (committing ships raises the projected garrison -> exposed flips off).
-            # Submitted default (LR_CONCENTRATE unset) keeps the full credit -> the
-            # engine call below is byte-identical.
-            exposed = (atk_reach > ships_ref.view(-1, 1)).to(def_reach.dtype)
-            def_reach = def_reach * (1.0 - exposed)
     val = _nf_hazard_value(
         owner=owner_traj, ships=ships_traj, prod=prod, atk_reach=atk_reach,
         me=int(me), steepness=_f("LR_NATIVE_STEEPNESS", 5.0),
@@ -1389,23 +1359,6 @@ def agent(obs, configuration=None):
             out.append((id2slot[sid], id2slot[tid], int(sh), int(eta)))
         return out
 
-    def _reach_max(pxy, horizon, mine):
-        """Strongest single ship-mass (planet or, for enemy, in-flight fleet) of the
-        given side that can reach `pxy` within `horizon` turns. The proposer's cheap
-        reach proxy for the concentration engine (no movement sim)."""
-        m = 0.0
-        for q in planets:
-            o = int(q.owner)
-            side = (o == me) if mine else (o != me and o != -1)
-            if side and dist(pxy, (float(q.x), float(q.y))) <= horizon * fleet_speed(float(q.ships)):
-                m = max(m, float(q.ships))
-        if not mine:
-            for fl in fleets:
-                if int(fl.owner) != me and int(fl.owner) != -1 and \
-                   dist(pxy, (float(fl.x), float(fl.y))) <= horizon * fleet_speed(float(fl.ships)):
-                    m = max(m, float(fl.ships))
-        return m
-
     for tgt in targets:
         tid = int(tgt.id)
         is_enemy = int(tgt.owner) != -1
@@ -1434,85 +1387,10 @@ def agent(obs, configuration=None):
         if not shots:
             continue
         shots.sort(key=lambda x: x[0])
-        eta0 = float(shots[0][0])
-        txy0 = (float(tgt.x), float(tgt.y))
-        # Concentration engine shared reach quantities (computed once, only when on).
-        defenders0 = contest0 = our_reach0 = 0.0
-        if _concentrate():
-            defenders0 = (prod * eta0 + float(tgt.ships)) if is_enemy else float(tgt.ships)
-            chorizon = eta0 + _f("LR_DECISIVE_BUF", 3.0)
-            contest0 = _reach_max(txy0, chorizon, mine=False)
-            our_reach0 = _reach_max(txy0, chorizon, mine=True)
-
-        # Piece 2 -- rank objectives by VALUE (prod * P(take-and-hold) - ship cost),
-        # not by cheapness, so big / threatened high-prod planets outrank cheap grabs.
-        if _conc_piece("LR_CONC_VALUE_RANK"):
-            field = sum(available.get(s[2], 0) for s in shots)
-            need_dec = defenders0 + contest0
-            decisive_field = 1.0 if field >= need_dec else field / (need_dec + 1.0)
-            reinforce_reach = 1.0 if our_reach0 >= contest0 else our_reach0 / (contest0 + 1.0)
-            p_takehold = max(0.0, min(1.0, decisive_field * reinforce_reach))
-            rank = prod * p_takehold - _f("LR_CONC_COST_W", 0.1) * float(shots[0][1])
-        else:
-            rank = prod / max(1.0, shots[0][0])
-            if is_enemy and enemy_boost != 1.0:
-                rank *= enemy_boost
+        rank = prod / max(1.0, shots[0][0])
+        if is_enemy and enemy_boost != 1.0:
+            rank *= enemy_boost
         front = frontier_eta((float(tgt.x), float(tgt.y)))
-
-        # Piece 1 -- coordinated decisive strike: pool sources that ARRIVE TOGETHER
-        # (within LR_CONC_WINDOW) so the combined fleet lands as one. The first wave
-        # must already clear the defenders (no bounce), and the full pool must beat
-        # defenders + contest (hold). If unachievable, emit nothing (defer to patience).
-        if _conc_piece("LR_CONC_STRIKE"):
-            W = float(_i("LR_CONC_WINDOW", 1))
-            cap_first = int(math.ceil(defenders0)) + 1
-            hold_total = int(math.ceil(defenders0 + contest0)) + 1
-            if is_enemy and hold_margin > 0.0:
-                hold_total += int(math.ceil(hold_margin * defenders0))
-            srcmap = {int(s[2]): s[3] for s in shots}
-            pool = [s for s in shots if float(s[0]) <= eta0 + W and available.get(int(s[2]), 0) > 0]
-            take = {}
-            first_step = int(math.ceil(eta0))
-            acc = 0
-            for (eta, size, sid, src, angle) in sorted(
-                    [s for s in pool if int(math.ceil(float(s[0]))) <= first_step],
-                    key=lambda s: -available.get(int(s[2]), 0)):
-                if acc >= cap_first:
-                    break
-                t = min(available.get(sid, 0), cap_first - acc)
-                if t > 0:
-                    take[sid] = t
-                    acc += t
-            strike = None
-            if acc >= cap_first:                          # first wave captures
-                total = acc
-                for (eta, size, sid, src, angle) in sorted(pool, key=lambda s: float(s[0])):
-                    if total >= hold_total:
-                        break
-                    extra = min(available.get(sid, 0) - take.get(sid, 0), hold_total - total)
-                    if extra > 0:
-                        take[sid] = take.get(sid, 0) + extra
-                        total += extra
-                if total >= hold_total:                   # full pool holds
-                    emit, triples, srcs = [], [], {}
-                    ok = True
-                    for sid, t in take.items():
-                        shot = _plan_shot(srcmap[sid], tgt, comet_ids, comet_paths, omega, t)
-                        if shot is None:
-                            ok = False
-                            break
-                        a2, eta2, _ = shot
-                        emit.append([sid, float(a2), t])
-                        triples.append((sid, tid, t, eta2))
-                        srcs[sid] = t
-                    if ok:
-                        units = units_for(triples)
-                        if not (units is None and id2slot is not None):
-                            strike = {"emit": emit, "units": units, "srcs": srcs,
-                                      "rank": rank, "front": front, "kind": "strike"}
-            if strike is not None:
-                candidates.append(strike)
-                continue
 
         # Decisive capture (PI 2026-06-20): ONE big fleet from our STRONGEST source,
         # sized to beat the target's defenders AND the strongest enemy force that can
@@ -1612,18 +1490,10 @@ def agent(obs, configuration=None):
         defend_range = _f("LR_DEFEND_RANGE", 35.0)
         enemy_fleets = [f for f in fleets
                         if int(f.owner) != me and int(f.owner) != -1]
-        conc_def = _conc_piece("LR_CONC_DEFEND")
-        def_minprod = _f("LR_DEFEND_MIN_PROD", 1.0)
-        def_horizon = _f("LR_DEFEND_HORIZON", 8.0)
         for mine in my_planets:
             mxy = (float(mine.x), float(mine.y))
             threat = sum(float(f.ships) for f in enemy_fleets
                          if dist(mxy, (float(f.x), float(f.y))) <= defend_range)
-            # Piece 4a -- buildup-aware: a high-production planet is also threatened by
-            # enemy PLANETS that can reach it soon (not just in-flight fleets), so we
-            # reinforce it BEFORE the wave launches.
-            if conc_def and float(mine.production) >= def_minprod:
-                threat = max(threat, _reach_max(mxy, def_horizon, mine=False))
             if threat <= float(mine.ships):
                 continue                                  # not under real threat
             deficit = int(math.ceil(threat - float(mine.ships))) + 1
@@ -1688,27 +1558,6 @@ def agent(obs, configuration=None):
         scored.sort(key=lambda e: -e[0])               # highest marginal value first
         candidates = [c for _, c in scored]
 
-    # Piece 3 -- patience / banking: require a MEANINGFUL value bar and cap attack
-    # objectives per turn, so cheap grabs no longer fritter ships -- they bank in the
-    # garrison to fund a decisive strike a few turns later. Defense ("kind"=="defend")
-    # is exempt from the cap. Anti-passivity backstops: it's a value bar (a decisive
-    # strike still commits immediately), the 2-ply keeps the producer floor + idle,
-    # and a bank-deadline force-deploys once idle ships pile up (no infinite hoarding).
-    conc_bank = _conc_piece("LR_CONC_BANK")
-    value_bar = _f("LR_CONC_VALUE_BAR", 6.0) if conc_bank else 0.0
-    max_obj = _i("LR_CONC_MAX_OBJ", 1) if conc_bank else 10 ** 9
-    obj_count = 0
-    best_held = None                          # (v, c): cleared ROI floor but not the bar
-
-    def _commit(c, v):
-        nonlocal committed_emit, committed_units, current
-        committed_emit = committed_emit + c["emit"]
-        committed_units = committed_units + (c["units"] or [])
-        committed_caps.append(c)
-        current = v
-        for s, sz in c["srcs"].items():
-            avail[s] = avail.get(s, 0) - sz
-
     for c in candidates:
         if (time.perf_counter() - t0) * 1000.0 > budget_ms:
             break
@@ -1718,25 +1567,13 @@ def agent(obs, configuration=None):
             v = score_units(committed_units + c["units"])
         else:
             v = value_fallback(committed_emit + c["emit"])
-        is_defend = (c.get("kind") == "defend")
-        clears_floor = v > current + floor
-        clears_bar = v > current + max(floor, value_bar)
-        cap_ok = is_defend or obj_count < max_obj
-        if (clears_bar if conc_bank else clears_floor) and cap_ok:
-            _commit(c, v)
-            if not is_defend:
-                obj_count += 1
-        elif conc_bank and clears_floor and not is_defend and best_held is None:
-            best_held = (v, c)
-
-    # Bank-deadline: if banking committed nothing this turn but idle ships have piled
-    # up beyond LR_CONC_BANK_CAP x the best objective's size, deploy it (anti-hoard).
-    if conc_bank and obj_count == 0 and best_held is not None:
-        bv, bc = best_held
-        bsize = max(1.0, float(sum(bc["srcs"].values())))
-        if sum(avail.values()) > _f("LR_CONC_BANK_CAP", 2.0) * bsize \
-                and not any(avail.get(s, 0) < sz for s, sz in bc["srcs"].items()):
-            _commit(bc, bv)
+        if v > current + floor:
+            committed_emit = committed_emit + c["emit"]
+            committed_units = committed_units + (c["units"] or [])
+            committed_caps.append(c)
+            current = v
+            for s, sz in c["srcs"].items():
+                avail[s] = avail.get(s, 0) - sz
 
     # ---- 2-ply lookahead pick (2P only): choose among a few full-plans by
     #      their value AFTER the producer's reply + a producer-vs-producer turn,
