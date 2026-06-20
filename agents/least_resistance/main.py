@@ -195,6 +195,20 @@ def _native_offense():
         "1", "true", "on", "yes")
 
 
+def _native_reinforce():
+    """Default-OFF gate (PI 2026-06-20). With the native leaf, holdability becomes a
+    REINFORCEMENT RACE: the flip-hazard denominator counts not just a planet's own
+    garrison but how much our OTHER planets can route to support it (conserved, so
+    finite reinforcement is shared across our holdings). A capture sticks only if our
+    reinforcement reach beats the enemy's attack reach there -> far/unsupportable
+    captures flip and score negative, close/supportable ones hold; overextension
+    self-penalizes (support spread thin). Routes the enemy threat through allocate
+    too (apples-to-apples conserved contest). OFF = byte-identical. Read at call
+    time."""
+    return os.environ.get("LR_NATIVE_REINFORCE", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _wallclock_ms():
     """Per-turn budget, read at CALL time. The bundle parity gate sets
     ORBIT_WARS_PARITY_WALLCLOCK_MS huge so the greedy loop never bails
@@ -638,12 +652,15 @@ def _native_value(obs_any, me):
         eta=_torch.ones(1, 1), owner=_torch.zeros(1, 1, dtype=_torch.long),
         valid=_torch.zeros(1, 1, dtype=_torch.bool),
     )
-    if _native_allocate():
+    if _native_allocate() or _native_reinforce():
         # Conserved per-source allocation (PI 2026-06-20). Pot is REINFORCEMENT-
         # aware: use the do-nothing projected garrison at a near step (the
         # second-order retake -- incoming enemy fleets land into the source
         # garrison and into our defense). In-flight fleets are NOT double-counted:
         # they land into ships_traj via the recurrence, not added separately here.
+        # The reinforcement-race gate (_native_reinforce) also routes the enemy
+        # threat through allocate so attack vs reinforcement is an apples-to-apples
+        # conserved contest.
         k_ref = min(int(H), _i("LR_NATIVE_REINF_STEP", 3))
         ships_ref = ships_traj[0, :, k_ref].to(_torch.float32)
         atk_reach = _nf_reach_mass(
@@ -681,12 +698,33 @@ def _native_value(obs_any, me):
         )
         off_weight = _f("LR_NATIVE_OFFENSE_W", 0.5)
         off_steepness = _f("LR_NATIVE_OFFENSE_STEEPNESS", 5.0)
+    def_reach = None
+    def_weight = 0.0
+    if _native_reinforce():
+        # Reinforcement race (PI 2026-06-20): how much OUR OTHER planets can route to
+        # support each of our planets -- conserved, so finite reinforcement is split
+        # across our holdings (overextension spreads it thin -> captures flip; a few
+        # close captures concentrate it -> they hold). Holdability becomes our
+        # reinforcement reach vs the enemy's attack reach. ships_ref is the projected
+        # garrison, so a plan that drained its planets on attacks shows weak support.
+        is_mine_d = (owner0 == int(me))
+        def_reach = _nf_reach_mass(
+            cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_mine_d,
+            H=int(H), prod=prod, aggregate="allocate", our_garrison=ships_ref,
+            alloc_w_prox=_f("LR_ALLOC_W_PROX", 1.0),
+            alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
+            alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5),
+            alloc_eps=_f("LR_ALLOC_EPS", 1.0),
+            target_mask=is_mine_d, exclude_self=True,
+        )
+        def_weight = _f("LR_NATIVE_DEF_W", 1.0)
     val = _nf_hazard_value(
         owner=owner_traj, ships=ships_traj, prod=prod, atk_reach=atk_reach,
         me=int(me), steepness=_f("LR_NATIVE_STEEPNESS", 5.0),
         discount=_f("LR_NATIVE_DISCOUNT", 1.0), value_mode="ships",
         inflight=_nf_inflight(arr_c), terminal=_f("LR_NATIVE_TERMINAL", 12.0),
         off_reach=off_reach, off_weight=off_weight, off_steepness=off_steepness,
+        def_reach=def_reach, def_weight=def_weight,
     )
     _NATIVE_LEAF_CALLS += 1
     return float(val.reshape(-1)[0])

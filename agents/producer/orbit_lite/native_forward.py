@@ -124,6 +124,8 @@ def reachable_enemy_mass(
     alloc_w_val: float = 1.0,     # allocate: planet-value (production) weight
     alloc_w_def: float = 0.5,     # allocate: inverse-garrison (weak-spot) weight
     alloc_eps: float = 1.0,       # allocate: numerical floor for logs / prox denom
+    target_mask: Tensor | None = None,  # [P] bool valid targets (allocate; default=~is_enemy)
+    exclude_self: bool = False,   # allocate: mask the source==target diagonal
 ) -> Tensor:
     """Enemy mass physically routable to each planet by step k -> ``[P, H+1]``.
 
@@ -185,7 +187,13 @@ def reachable_enemy_mass(
         log_val = alloc_w_val * torch.log(val_vec.clamp(min=0.0) + alloc_eps)
         log_def = alloc_w_def * torch.log(tgt_def.clamp(min=0.0) + alloc_eps)
         target_bias = (log_val - log_def).view(1, P)            # [1, P]
-        not_enemy = (~is_enemy).view(1, P)                      # [1, P] mine + neutral
+        # Valid targets: default = non-enemy (mine + neutral). `target_mask` lets the
+        # same primitive be pointed a third way -- our planets reinforcing OUR planets
+        # (sources=is_mine, target_mask=is_mine) for the reinforcement-race holdability.
+        tmask = (~is_enemy) if target_mask is None else target_mask
+        not_enemy = tmask.view(1, P)                            # [1, P]
+        self_mask = (~torch.eye(P, dtype=torch.bool, device=device)
+                     if exclude_self else None)                 # [P, P] off-diagonal
         NEG = float(torch.finfo(fdtype).min) / 4.0
 
     out = torch.zeros(P, H + 1, dtype=fdtype, device=device)
@@ -204,6 +212,8 @@ def reachable_enemy_mass(
             denom = (float(k) * speed.view(P, 1) + alloc_eps)  # [src, 1]
             logit = alloc_w_prox * (prox / denom) + target_bias  # [src, tgt]
             valid = reachable_any & not_enemy                  # [src, tgt]
+            if self_mask is not None:
+                valid = valid & self_mask                      # a planet doesn't reinforce itself
             logit = torch.where(valid, logit,
                                 torch.full_like(logit, NEG))
             m = logit.max(dim=1, keepdim=True).values          # [src, 1]
@@ -242,6 +252,8 @@ def hazard_ownership_value(
     discount: float = 1.0,
     concentrate: bool = False,
     model_opp_expansion: bool = True,
+    def_reach: Tensor | None = None,   # [P, H+1] OUR reinforcement mass onto each planet
+    def_weight: float = 1.0,           # weight of reinforcement in the leak denominator
     value_mode: str = "ships",
     inflight: Tensor | None = None,
     terminal: float = 12.0,
@@ -278,11 +290,20 @@ def hazard_ownership_value(
 
     atk = atk_reach.view(1, P, H1).to(fdtype)
     garrison = ships.clamp(min=0.0)
+    # Defender of the flip contest. By default the planet's own garrison; with
+    # `def_reach` (PI 2026-06-20, the reinforcement race) it ALSO counts how much our
+    # OTHER planets can route to support it -> holdability becomes "can we reinforce
+    # faster than the enemy attacks", so far/unsupportable captures flip (high leak)
+    # and close/supported ones stick. `def_reach` is conserved + ~0 off our planets,
+    # so neutrals/enemy are unaffected. None => byte-identical (garrison only).
+    deff = garrison
+    if def_reach is not None and def_weight != 0.0:
+        deff = garrison + float(def_weight) * def_reach.view(1, P, H1).to(fdtype)
     # Zero the hazard where NO enemy mass can reach (atk==0): a planet under no
     # physical threat must have flip probability 0, not the sigmoid's nonzero
     # floor. This also pins present-certainty: atk_reach[:,0]==0 by construction,
     # so step-0 survival is exactly 1 (the present is known, not discounted).
-    leak = flip_prob(atk, garrison, steepness=steepness) * (atk > 0).to(fdtype)
+    leak = flip_prob(atk, deff, steepness=steepness) * (atk > 0).to(fdtype)
 
     is_mine = (owner == me).to(fdtype)
     is_opp = ((owner >= 0) & (owner != me)).to(fdtype)
