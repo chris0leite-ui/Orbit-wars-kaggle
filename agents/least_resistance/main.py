@@ -167,6 +167,19 @@ def _native_strict():
         "1", "true", "on", "yes")
 
 
+def _dropout_prune():
+    """PI 2026-06-20: decline a candidate ATTACK whose flip-back ('dropout')
+    probability is high -- the target sits where incoming enemy fleets / a nearby
+    opponent will retake it (and far / high-EDA launches, which give the enemy more
+    time to contest). A gate on OUR attacks only (avoid wasteful fleets), NOT a
+    defensive buff on our standing planets (that lever regressed). Default tracks
+    the native leaf; LR_DROPOUT_PRUNE overrides. Read at call time."""
+    v = os.environ.get("LR_DROPOUT_PRUNE")
+    if v is None:
+        return _native_leaf()
+    return v.strip().lower() in ("1", "true", "on", "yes")
+
+
 def _wallclock_ms():
     """Per-turn budget, read at CALL time. The bundle parity gate sets
     ORBIT_WARS_PARITY_WALLCLOCK_MS huge so the greedy loop never bails
@@ -1212,6 +1225,33 @@ def agent(obs, configuration=None):
             out.append((id2slot[sid], id2slot[tid], int(sh), int(eta)))
         return out
 
+    # Dropout-prune (PI 2026-06-20): strongest single enemy mass that can REACH a
+    # target by about our arrival + a retake window -> probability the capture is
+    # flipped back. Decline high-dropout attacks (incoming fleets / nearby opponent;
+    # far/high-EDA launches give more time to contest) so we don't waste fleets.
+    _dp_on = _dropout_prune()
+    _enemy_pl = [((float(p.x), float(p.y)), float(p.ships)) for p in planets
+                 if int(p.owner) != me and int(p.owner) != -1] if _dp_on else []
+    _enemy_fl = [((float(f.x), float(f.y)), float(f.ships)) for f in fleets
+                 if int(f.owner) != me and int(f.owner) != -1] if _dp_on else []
+    _dp_buf = _f("LR_RETAKE_BUFFER", 4.0)
+    _dp_steep = _f("LR_DROPOUT_STEEPNESS", 5.0)
+    _dp_max = _f("LR_DROPOUT_MAX", 0.8)   # only decline clearly-doomed attacks
+
+    def _attack_dropout(txy, eta, our_hold):
+        horizon = float(eta) + _dp_buf
+        reach = 0.0
+        for (qxy, qsh) in _enemy_pl:
+            if qsh > reach and dist(txy, qxy) <= horizon * fleet_speed(qsh):
+                reach = qsh
+        for (fxy, fsh) in _enemy_fl:
+            if fsh > reach and dist(txy, fxy) <= horizon * fleet_speed(fsh):
+                reach = fsh
+        if reach <= 0.0:
+            return 0.0
+        bal = (reach - our_hold) / (reach + our_hold + 1.0)
+        return 1.0 / (1.0 + math.exp(-_dp_steep * bal))
+
     for tgt in targets:
         tid = int(tgt.id)
         is_enemy = int(tgt.owner) != -1
@@ -1240,6 +1280,12 @@ def agent(obs, configuration=None):
         if not shots:
             continue
         shots.sort(key=lambda x: x[0])
+        if _dp_on:
+            eta0, size0 = shots[0][0], shots[0][1]
+            defenders0 = (prod * eta0 + tgt.ships) if is_enemy else tgt.ships
+            our_hold = max(0.0, size0 - defenders0) + prod * _dp_buf
+            if _attack_dropout((float(tgt.x), float(tgt.y)), eta0, our_hold) > _dp_max:
+                continue                       # likely retaken -> don't waste the fleet
         rank = prod / max(1.0, shots[0][0])
         if is_enemy and enemy_boost != 1.0:
             rank *= enemy_boost
