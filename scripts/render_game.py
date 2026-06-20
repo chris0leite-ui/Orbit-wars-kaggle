@@ -18,9 +18,22 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import sys
 import time
 from pathlib import Path
+
+# Pin threads so ad-hoc renders match the single-threaded eval workers. The
+# 2026-06-19 postmortem caught a multi-threaded render diverging from the
+# canonical result (float reductions reorder) -- a rendered "loss" was actually a
+# WIN, misleading a diagnosis. Set BEFORE torch is imported by any agent.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+try:
+    import torch as _torch
+    _torch.set_num_threads(1)
+except Exception:
+    pass
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -99,7 +112,8 @@ def play(seed, seat, players, render_html):
     opp_names = list(PANEL.keys())[: players - 1]
     seats = [None] * players
     focal_ms: list[float] = []
-    seats[seat] = _timed(_arity(_load(LR)), focal_ms)
+    focal_fn = _load(LR)
+    seats[seat] = _timed(_arity(focal_fn), focal_ms)
     j = 0
     for i in range(players):
         if i == seat:
@@ -146,6 +160,9 @@ def play(seed, seat, players, render_html):
           % ("  ".join(share_str), fm, fo))
     print("    scatter: peak in-flight fleets=%d  total launches=%d"
           % (peak_inflight, total_launches))
+    nat = focal_fn.__globals__.get("_NATIVE_LEAF_CALLS")
+    if nat is not None:
+        print("    native_leaf_calls=%d  (proof the native leaf executed in-game)" % nat)
     if focal_ms:
         sm = sorted(focal_ms)
         p95 = sm[min(len(sm) - 1, int(0.95 * len(sm)))]
