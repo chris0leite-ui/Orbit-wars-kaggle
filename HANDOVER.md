@@ -1,5 +1,70 @@
 # HANDOVER.md — next-session brief
 
+> **Refreshed 2026-06-20 (deep-search-refuted session).** Live agent is
+> `least_resistance` (2-ply take-and-hold). This session tested four strength
+> ideas, ALL null/negative at proper sample — read the two new KB thoughts:
+> `2026-06-20-deep-search-refuted-strength-vs-timing-bind.md` and
+> `2026-06-20-scorer-objective-not-myopic-loss-decided-step30-50.md`. The
+> 06-18 dropout brief below is HISTORICAL (that line is superseded by
+> least_resistance).
+
+## ⚠️ 2026-06-20 — state of play (read this first)
+
+- **Nothing shipped this session. Zero submits.** Rolling pair unchanged:
+  `{53858931 lr_concentrate (selective-concentration PROBE, still warming),
+  53842571 lr_2ply_nocomet (champion ~1008)}`. The broken depth-3 ERROR slot was
+  already evicted by the probe last session.
+- **FIRST THING NEXT SESSION:** `kaggle competitions submissions orbit-wars | head -5`
+  — read the **concentration probe `53858931`** μ. It tests whether selective
+  force-concentration pays on the WEAK-opponent ladder (the local strong panel
+  can't see that regime). If μ clears the champion ~1100 → promote concentration
+  (one-line default flip + Rule 46/42); if it settles even → close that line.
+  This ladder read is the one real-world signal pending.
+
+- **Four strength ideas REFUTED this session (all banked, do NOT re-walk):**
+  1. **Deep search depth-3** — n=32 paired vs V2: PARITY with 2-ply even with the
+     accurate producer rollout opponent (Δmargin −0.062, p=1.00); the old 17/28
+     was n=28 noise. And it's caught in a **strength-vs-timing bind**: the accurate
+     opponent is too slow for the wall (1581 ms spikes → the ladder ERROR), the
+     wall-safe cheap (`LR_DEEP_OPP=1`) opponent REGRESSES (−0.688, p=0.01).
+     Anytime-guard code (`rollout_value` deadline + candidate[0] guard) +
+     `tests/test_deep_search_anytime.py` are committed, **default-OFF, safe if ever
+     revisited; depth-3 is NOT baked ON.**
+  2. **Over-commit / scatter** (prior session) — n=40 inert vs strong panel.
+  3. **Scorer myopia** (it under-values territory) — REFUTED: ship-margin and
+     planet-margin move together; ship advantage is a good LEADING indicator. The
+     scorer's objective is fine.
+  4. (implied) more search depth / longer horizon / value-territory-more — none move
+     the needle.
+
+- **Where the evidence triangulates:** losses are **close games that tip wrong and
+  then snowball** (even at step 30; only marginally behind at step 50: −2.8 ship
+  margin; blowout later via production compounding). NOT defense (we shed *fewer*
+  of our own planets in losses), NOT raw neutral count (we grab slightly *more*
+  neutrals in losses, 2.75 vs 2.50). The gap is **move quality at the margin in the
+  early-midgame**, and it smells partly seat/map-bound (losses are the low-expansion
+  maps). `scripts/diag_scorer.py` + the two KB thoughts have the numbers.
+
+- **THE OPEN FORK (PI deferred with "wrap up" — decide next session):**
+  (a) **Test a neutral-QUALITY fix** — measure whether we capture lower-PRODUCTION
+      neutrals than V2 by step 50, and if so bias neutral ranking (currently
+      `rank = prod/eta`, a cheap-fast bias) toward production. Modest confidence
+      (4 tactical knobs already died at n=32).
+  (b) **Wait for the probe `53858931`** before more compute (deadline 2026-06-23).
+  (c) **Pivot to win-equity / variance-when-behind** — the standing KB recommendation
+      (`2026-06-14-why-stuck-4p-value-head-wrong-objective.md`): value the gap to the
+      single strongest opponent and accept variance to steal the close games, instead
+      of playing safe 2nd. Bigger, architectural. `LR_LEADER_RELATIVE_4P` exists but
+      regressed 4P at n=16 — would need a fresh, correct take + n≥32.
+
+- **Postmortem:** `audit/2026-06-20-postmortem-kaggle-dropout-strategy-improve-g57iln.md`
+  — key lesson + PENDING improvements.md promotion candidate (`revalidate-subbar-prior`:
+  re-measure a sub-n-32 strength claim at n≥32 BEFORE planning to ship it; the
+  deep-search line burned ~half a session hardening a premise that collapsed).
+  Not yet ratified — PI to approve.
+
+---
+
 > **Refreshed 2026-06-18 (smart-dropout session).** Active line =
 > **smart dropout on `agents/producer_plus`**. Read `state/DROPOUT_PLAN.md`
 > first (the executable roadmap), then
