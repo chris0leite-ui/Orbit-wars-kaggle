@@ -140,6 +140,19 @@ def _leader_relative_4p():
         "1", "true", "on", "yes")
 
 
+def _prod_objective():
+    """Default-OFF gate (PI 2026-06-20 thought). When ON, the position value the
+    agent optimizes becomes a PRODUCTION DIFFERENTIAL that only counts captures
+    that HOLD: production I own (credited forward) minus enemy mass that can reach
+    my planets (defensibility), minus the strongest rival's same quantity -- over a
+    LONGER horizon so far defensible captures are visible. Replaces the ship-count
+    leaf (`_project_value`) and offers the 2-ply chooser several concentration
+    levels so it can drop scattered attacks that don't convert. OFF =
+    byte-identical ship-count path. Read at call time."""
+    return os.environ.get("LR_PROD_OBJECTIVE", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _wallclock_ms():
     """Per-turn budget, read at CALL time. The bundle parity gate sets
     ORBIT_WARS_PARITY_WALLCLOCK_MS huge so the greedy loop never bails
@@ -438,6 +451,10 @@ def _project_value(obs_any, me):
     fleets + production + combat, no new launches) and return our garrison
     advantage (our ships - opponents') at the horizon. The producer's own
     garrison-flow projector used as a state evaluator."""
+    if _prod_objective():
+        # PI 2026-06-20: optimize PRODUCTION-held differential, not ship-count, so
+        # only captures that stick (and don't expose us) raise the score.
+        return _capability_margin(obs_any, me)
     ot = _single_obs_to_tensor(obs_any, player_id=int(me))
     pc = _largest_initial_player_count(ot)
     H = PROJECT_HORIZON_4P if int(pc) >= 4 else PROJECT_HORIZON_2P
@@ -536,6 +553,58 @@ def _project_outcome(obs_any, me, horizon=None):
     # 4P rewards out-positioning each rival -> rank-aligned but defense-sensitive.
     beaten = sum(1.0 if mine > r else (0.5 if mine == r else 0.0) for r in rivals)
     return beaten / len(rivals), (mine - max(rivals))
+
+
+def _capability_margin(obs_any, me):
+    """Production-differential, hold-aware position value (PI 2026-06-20 thought).
+
+    Score a position by CAPABILITY rather than ship-count: production I own
+    (credited forward, so a held planet keeps paying out) MINUS enemy mass that
+    can reach my planets (defensibility -> captures that won't hold and exposed
+    planets score worse), then my capability minus the STRONGEST rival's. Projected
+    over a LONGER horizon (LR_PROD_HORIZON, default 30) so a far defensible capture's
+    production becomes visible and a bounce-y capture the opponent retakes within the
+    window is correctly devalued. Self-contained (does not touch `_project_outcome`
+    or the live 4P robust path). Returns a single scalar margin (higher = better)."""
+    ot = _single_obs_to_tensor(obs_any, player_id=int(me))
+    pc = int(_largest_initial_player_count(ot))
+    H = _i("LR_PROD_HORIZON", 30)
+    cfg = _MovementConfig(
+        movement_horizon=int(H), drift_epsilon=1e-3, track_fleets=True,
+        player_count=pc, max_tracked_fleets=128,
+    )
+    mv = _ensure_planet_movement(obs_tensors=ot, expected_cfg=cfg, cached_movement=None)
+    status = mv.garrison_status(max_horizon=int(H))
+    owner_l = status.owner[:, int(H)].to(_torch.long)
+    ships = status.ships[:, int(H)].to(_torch.float32)
+    prod = mv.planet_prod.to(_torch.float32).reshape(-1)
+    # Value held production heavily (a planet I still own keeps producing), plus a
+    # little of its standing garrison so concentration / not-bleeding still register.
+    pcred = _f("LR_PROD_CREDIT", 12.0)
+    gar_w = _f("LR_PROD_GARRISON_W", 0.1)
+    base_val = gar_w * ships + pcred * prod                      # [P]
+    cap = _torch.zeros(pc, dtype=_torch.float32)
+    for pl in range(pc):
+        cap[pl] = (base_val * (owner_l == pl).to(_torch.float32)).sum()
+    # Defensibility: subtract how out-massed each of my planets is by enemy force
+    # that can reach it -> a capture I cannot hold, or a drained/exposed planet,
+    # lowers my capability. This is the "captures must stick" term.
+    try:
+        xy = ot["planets"][:, 2:4].to(_torch.float32)
+        d = _torch.cdist(xy, xy)
+        near_def = (d <= _f("LR_PROD_DEF_RANGE", 35.0)).to(_torch.float32)
+        w_def = _f("LR_PROD_W_DEF", 1.0)
+        for pl in range(pc):
+            mine_mask = (owner_l == pl).to(_torch.float32)
+            enemy_mask = ((owner_l != pl) & (owner_l >= 0)).to(_torch.float32)
+            reach_enemy = near_def @ (ships * enemy_mask)
+            vuln = _torch.clamp(reach_enemy - ships, min=0.0)
+            cap[pl] = cap[pl] - w_def * (vuln * mine_mask).sum()
+    except Exception:
+        pass
+    mine = float(cap[int(me)])
+    rivals = [float(cap[pl]) for pl in range(pc) if pl != int(me)]
+    return mine - (max(rivals) if rivals else 0.0)
 
 
 def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=None,
@@ -1307,7 +1376,12 @@ def agent(obs, configuration=None):
         # Levers 2/3 are 4P-only: 2P is our strength and these regress it.
         anytime_on = _anytime() and num_seats >= 4
         plans = [producer_me, committed_emit, []]   # producer floor first
-        if anytime_on:
+        if _prod_objective() and len(committed_emit) > 1:
+            # PI 2026-06-20: offer every CONCENTRATION level (1..n-1 launches) so the
+            # production-held leaf can keep only the captures that stick and drop the
+            # scattered tail that doesn't convert.
+            plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
+        elif anytime_on:
             # Lever 3: spend headroom -- offer every aggression level of the
             # committed plan, so extra compute becomes more plans evaluated.
             plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
@@ -1322,7 +1396,7 @@ def agent(obs, configuration=None):
                 seen.add(key)
                 uniq.append(p)
         try:
-            if _robust() and num_seats >= 4:
+            if _robust() and num_seats >= 4 and not _prod_objective():
                 # Opponent-agnostic robust-ensemble pick (default OFF), 4-PLAYER
                 # ONLY. Capability leaf (production + defensibility + reach), rank
                 # placement objective. In 2P we fall through to the proven 2-ply
