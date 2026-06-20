@@ -167,17 +167,32 @@ def _native_strict():
         "1", "true", "on", "yes")
 
 
-def _dropout_prune():
-    """PI 2026-06-20: decline a candidate ATTACK whose flip-back ('dropout')
-    probability is high -- the target sits where incoming enemy fleets / a nearby
-    opponent will retake it (and far / high-EDA launches, which give the enemy more
-    time to contest). A gate on OUR attacks only (avoid wasteful fleets), NOT a
-    defensive buff on our standing planets (that lever regressed). Default tracks
-    the native leaf; LR_DROPOUT_PRUNE overrides. Read at call time."""
-    v = os.environ.get("LR_DROPOUT_PRUNE")
-    if v is None:
-        return _native_leaf()
-    return v.strip().lower() in ("1", "true", "on", "yes")
+def _native_allocate():
+    """Default-OFF gate (PI 2026-06-20). When ON (with the native leaf), the
+    flip-hazard threat per planet is a CONSERVED allocation: pool all reachable
+    enemy strength (planets + landed reinforcements) and distribute it across our
+    planets concentrated on the close / big / weakly-held ones, with the shares
+    summing to the enemy's total ('integrates to enemy strength'). Replaces the
+    per-planet 'max' threat, which over-counts (one enemy looks like a full threat
+    to every planet at once -> the board looks doomed and the agent freezes).
+    Also makes the pot reinforcement-aware (the second-order retake). OFF =
+    byte-identical 'max' path. Read at call time."""
+    return os.environ.get("LR_NATIVE_ALLOCATE", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
+def _native_offense():
+    """Default-OFF gate (PI 2026-06-20). With the native leaf, ADD the symmetric
+    mirror of the defensive flip-hazard: OUR reachable mass onto enemy/neutral
+    planets, priced as expected capture-gain (offensive POTENTIAL). Computed on each
+    plan's own trajectory, so massing ships near the frontier earns value (HOLDING /
+    patience is rewarded), dribbling into far neutrals routes ships away and destroys
+    it (small far grabs lose to holding), and a concentrated capture converts it into
+    realized margin (decisive action wins). One coherent value term for the dribble /
+    no-concentration / launch-every-round behaviour. OFF = byte-identical. Read at
+    call time."""
+    return os.environ.get("LR_NATIVE_OFFENSE", "0").strip().lower() in (
+        "1", "true", "on", "yes")
 
 
 def _wallclock_ms():
@@ -623,15 +638,55 @@ def _native_value(obs_any, me):
         eta=_torch.ones(1, 1), owner=_torch.zeros(1, 1, dtype=_torch.long),
         valid=_torch.zeros(1, 1, dtype=_torch.bool),
     )
-    atk_reach = _nf_reach_mass(
-        cross_dist=cache.cross_dist, ships=ships0, is_enemy=is_enemy, H=int(H),
-        prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
-    )
+    if _native_allocate():
+        # Conserved per-source allocation (PI 2026-06-20). Pot is REINFORCEMENT-
+        # aware: use the do-nothing projected garrison at a near step (the
+        # second-order retake -- incoming enemy fleets land into the source
+        # garrison and into our defense). In-flight fleets are NOT double-counted:
+        # they land into ships_traj via the recurrence, not added separately here.
+        k_ref = min(int(H), _i("LR_NATIVE_REINF_STEP", 3))
+        ships_ref = ships_traj[0, :, k_ref].to(_torch.float32)
+        atk_reach = _nf_reach_mass(
+            cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
+            H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
+            aggregate="allocate", our_garrison=ships_ref,
+            alloc_w_prox=_f("LR_ALLOC_W_PROX", 1.0),
+            alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
+            alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5),
+            alloc_eps=_f("LR_ALLOC_EPS", 1.0),
+        )
+    else:
+        atk_reach = _nf_reach_mass(
+            cross_dist=cache.cross_dist, ships=ships0, is_enemy=is_enemy, H=int(H),
+            prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
+        )
+    off_reach = None
+    off_weight = 0.0
+    off_steepness = 5.0
+    if _native_offense():
+        # Symmetric mirror: OUR routable mass onto enemy/neutral planets (our planets
+        # are the "sources"). Conserved `allocate` so held mass isn't double-counted
+        # across many enemy targets. Reference garrison at the same near step as the
+        # defensive snapshot. This is the capture-POTENTIAL the leaf credits.
+        k_off = min(int(H), _i("LR_NATIVE_OFFENSE_STEP", 3))
+        ships_off = ships_traj[0, :, k_off].to(_torch.float32)
+        is_mine_t = (owner0 == int(me))
+        off_reach = _nf_reach_mass(
+            cross_dist=cache.cross_dist, ships=ships_off, is_enemy=is_mine_t,
+            H=int(H), prod=prod, aggregate="allocate", our_garrison=ships_off,
+            alloc_w_prox=_f("LR_ALLOC_W_PROX", 1.0),
+            alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
+            alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5),
+            alloc_eps=_f("LR_ALLOC_EPS", 1.0),
+        )
+        off_weight = _f("LR_NATIVE_OFFENSE_W", 0.5)
+        off_steepness = _f("LR_NATIVE_OFFENSE_STEEPNESS", 5.0)
     val = _nf_hazard_value(
         owner=owner_traj, ships=ships_traj, prod=prod, atk_reach=atk_reach,
         me=int(me), steepness=_f("LR_NATIVE_STEEPNESS", 5.0),
         discount=_f("LR_NATIVE_DISCOUNT", 1.0), value_mode="ships",
         inflight=_nf_inflight(arr_c), terminal=_f("LR_NATIVE_TERMINAL", 12.0),
+        off_reach=off_reach, off_weight=off_weight, off_steepness=off_steepness,
     )
     _NATIVE_LEAF_CALLS += 1
     return float(val.reshape(-1)[0])
@@ -1225,33 +1280,6 @@ def agent(obs, configuration=None):
             out.append((id2slot[sid], id2slot[tid], int(sh), int(eta)))
         return out
 
-    # Dropout-prune (PI 2026-06-20): strongest single enemy mass that can REACH a
-    # target by about our arrival + a retake window -> probability the capture is
-    # flipped back. Decline high-dropout attacks (incoming fleets / nearby opponent;
-    # far/high-EDA launches give more time to contest) so we don't waste fleets.
-    _dp_on = _dropout_prune()
-    _enemy_pl = [((float(p.x), float(p.y)), float(p.ships)) for p in planets
-                 if int(p.owner) != me and int(p.owner) != -1] if _dp_on else []
-    _enemy_fl = [((float(f.x), float(f.y)), float(f.ships)) for f in fleets
-                 if int(f.owner) != me and int(f.owner) != -1] if _dp_on else []
-    _dp_buf = _f("LR_RETAKE_BUFFER", 4.0)
-    _dp_steep = _f("LR_DROPOUT_STEEPNESS", 5.0)
-    _dp_max = _f("LR_DROPOUT_MAX", 0.8)   # only decline clearly-doomed attacks
-
-    def _attack_dropout(txy, eta, our_hold):
-        horizon = float(eta) + _dp_buf
-        reach = 0.0
-        for (qxy, qsh) in _enemy_pl:
-            if qsh > reach and dist(txy, qxy) <= horizon * fleet_speed(qsh):
-                reach = qsh
-        for (fxy, fsh) in _enemy_fl:
-            if fsh > reach and dist(txy, fxy) <= horizon * fleet_speed(fsh):
-                reach = fsh
-        if reach <= 0.0:
-            return 0.0
-        bal = (reach - our_hold) / (reach + our_hold + 1.0)
-        return 1.0 / (1.0 + math.exp(-_dp_steep * bal))
-
     for tgt in targets:
         tid = int(tgt.id)
         is_enemy = int(tgt.owner) != -1
@@ -1280,12 +1308,6 @@ def agent(obs, configuration=None):
         if not shots:
             continue
         shots.sort(key=lambda x: x[0])
-        if _dp_on:
-            eta0, size0 = shots[0][0], shots[0][1]
-            defenders0 = (prod * eta0 + tgt.ships) if is_enemy else tgt.ships
-            our_hold = max(0.0, size0 - defenders0) + prod * _dp_buf
-            if _attack_dropout((float(tgt.x), float(tgt.y)), eta0, our_hold) > _dp_max:
-                continue                       # likely retaken -> don't waste the fleet
         rank = prod / max(1.0, shots[0][0])
         if is_enemy and enemy_boost != 1.0:
             rank *= enemy_boost

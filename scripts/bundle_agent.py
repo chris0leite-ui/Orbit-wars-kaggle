@@ -48,6 +48,7 @@ DEFAULT_LIB_ORDER = [
     "combat",
     "world_model",
     "intent",
+    "kinematic_table",   # used by trajectory (since 2026-..); deps geometry/orbit (earlier)
     "trajectory",
     "mechanism",
     "mission",
