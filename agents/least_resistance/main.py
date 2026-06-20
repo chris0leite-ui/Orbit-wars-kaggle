@@ -337,6 +337,17 @@ def _skip_comets():
     return _i("LR_SKIP_COMETS", 1) >= 1
 
 
+def _decisive_capture():
+    """Default-OFF gate (PI 2026-06-20). When ON, take a target with ONE decisive
+    fleet from our STRONGEST source, sized to beat not just the target's garrison but
+    the strongest enemy force that can reach it by ~our arrival (the contest) -- a
+    bigger fleet is also FASTER (fleet speed grows with size), so it wins the race and
+    holds, like the opponent's single big strike. Falls back to the minimal solo/gang
+    when no single source can field it (no forced passivity). Read at call time."""
+    return os.environ.get("LR_DECISIVE_CAPTURE", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _iterdeepen():
     """Anytime iterative deepening for the deep rollout (default 0 = OFF, fixed
     depth). When ON, _deep_pick deepens d=1..LR_ROLLOUT_DEPTH within the timebox,
@@ -1380,6 +1391,48 @@ def agent(obs, configuration=None):
         if is_enemy and enemy_boost != 1.0:
             rank *= enemy_boost
         front = frontier_eta((float(tgt.x), float(tgt.y)))
+
+        # Decisive capture (PI 2026-06-20): ONE big fleet from our STRONGEST source,
+        # sized to beat the target's defenders AND the strongest enemy force that can
+        # reach it by ~our arrival (the contest) -- bigger => faster (size->speed) =>
+        # wins the race and holds, like the opponent's single decisive strike. Falls
+        # through to the minimal solo/gang below if no single source can field it.
+        if _decisive_capture():
+            eta0 = float(shots[0][0])
+            defenders0 = (prod * eta0 + float(tgt.ships)) if is_enemy else float(tgt.ships)
+            horizon = eta0 + _f("LR_DECISIVE_BUF", 3.0)
+            txy = (float(tgt.x), float(tgt.y))
+            contest = 0.0
+            for q in planets:
+                if int(q.owner) != me and int(q.owner) != -1:
+                    if dist(txy, (float(q.x), float(q.y))) <= horizon * fleet_speed(float(q.ships)):
+                        contest = max(contest, float(q.ships))
+            for fl in fleets:
+                if int(fl.owner) != me and int(fl.owner) != -1:
+                    if dist(txy, (float(fl.x), float(fl.y))) <= horizon * fleet_speed(float(fl.ships)):
+                        contest = max(contest, float(fl.ships))
+            dec_size = int(math.ceil(defenders0 + contest)) + 1
+            if is_enemy and hold_margin > 0.0:
+                dec_size += int(math.ceil(hold_margin * defenders0))
+            # Strongest affordable source (most ships) -> big, fast, decisive.
+            dec = None
+            for (eta, size, sid, src, angle) in sorted(
+                    shots, key=lambda s: -available.get(s[2], 0)):
+                if available[sid] >= dec_size:
+                    shot = _plan_shot(src, tgt, comet_ids, comet_paths, omega, dec_size)
+                    if shot is None:
+                        continue
+                    a2, eta2, _ = shot
+                    units = units_for([(sid, tid, dec_size, eta2)])
+                    if units is None and id2slot is not None:
+                        continue
+                    dec = {"emit": [[sid, float(a2), dec_size]],
+                           "units": units, "srcs": {sid: dec_size},
+                           "rank": rank, "front": front}
+                    break
+            if dec is not None:
+                candidates.append(dec)
+                continue
 
         # Solo capture from the cheapest affordable source — re-aim at the
         # actual size so the emit angle and the scorer eta are accurate.
