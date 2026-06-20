@@ -575,20 +575,31 @@ def _capability_margin(obs_any, me):
     )
     mv = _ensure_planet_movement(obs_tensors=ot, expected_cfg=cfg, cached_movement=None)
     status = mv.garrison_status(max_horizon=int(H))
-    owner_l = status.owner[:, int(H)].to(_torch.long)
-    ships = status.ships[:, int(H)].to(_torch.float32)
+    owner_all = status.owner.to(_torch.long)            # [P, H+1] owner at each turn
+    owner_l = owner_all[:, int(H)]                       # endpoint owner
+    ships = status.ships[:, int(H)].to(_torch.float32)   # endpoint garrison
     prod = mv.planet_prod.to(_torch.float32).reshape(-1)
-    # Value held production heavily (a planet I still own keeps producing), plus a
-    # little of its standing garrison so concentration / not-bleeding still register.
-    pcred = _f("LR_PROD_CREDIT", 12.0)
     gar_w = _f("LR_PROD_GARRISON_W", 0.1)
-    base_val = gar_w * ships + pcred * prod                      # [P]
     cap = _torch.zeros(pc, dtype=_torch.float32)
-    for pl in range(pc):
-        cap[pl] = (base_val * (owner_l == pl).to(_torch.float32)).sum()
+    if _i("LR_PROD_INTEGRAL", 1):
+        # Production INTEGRATED over the whole horizon (PI 2026-06-20: a planet lost
+        # for a few rounds costs its production every one of those rounds -- "these
+        # add up"; and a neutral grabbed EARLY pays out for all later turns, so this
+        # also rewards lasting expansion rather than turtling). Sum prod over t=0..H.
+        for pl in range(pc):
+            owned_t = (owner_all == pl).to(_torch.float32)          # [P, H+1]
+            cap[pl] = (prod.unsqueeze(1) * owned_t).sum() \
+                + gar_w * (ships * (owner_l == pl).to(_torch.float32)).sum()
+    else:
+        # iter-1 endpoint snapshot (kept behind LR_PROD_INTEGRAL=0 for comparison).
+        pcred = _f("LR_PROD_CREDIT", 12.0)
+        base_val = gar_w * ships + pcred * prod                     # [P]
+        for pl in range(pc):
+            cap[pl] = (base_val * (owner_l == pl).to(_torch.float32)).sum()
     # Defensibility: subtract how out-massed each of my planets is by enemy force
     # that can reach it -> a capture I cannot hold, or a drained/exposed planet,
-    # lowers my capability. This is the "captures must stick" term.
+    # lowers my capability. This is the "captures must stick" term (potential
+    # threats the no-new-launches projector won't simulate).
     try:
         xy = ot["planets"][:, 2:4].to(_torch.float32)
         d = _torch.cdist(xy, xy)
