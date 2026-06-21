@@ -1670,6 +1670,14 @@ def agent(obs, configuration=None):
     # Larger sizes force source-combining, so fewer / bigger fleets (concentration)
     # emerge naturally. Set LR_HOLD_MARGIN=0 to disable.
     hold_margin = _f("LR_HOLD_MARGIN", 0.5)
+    # Neutral mass margin (ported from r48nve d3049d1f; default 0.0 = OFF =>
+    # byte-identical). Expansion (neutral) captures are otherwise sized to JUST take
+    # the empty planet -- a small, by the size->speed law SLOW fleet that lands thin,
+    # so we crawl into an undefendable spread. With this margin a neutral capture is
+    # sized bigger: faster arrival AND surplus garrison to hold the new planet / stage
+    # the next push. Scaled by the planet's value (production) and travel time so far /
+    # valuable neutrals get the most mass. Enemy captures already get hold_margin.
+    neutral_margin = _f("LR_NEUTRAL_MARGIN", 0.0)
 
     def units_for(launch_triples):
         # launch_triples: list of (src_id, tgt_id, ships, eta)
@@ -1719,6 +1727,8 @@ def agent(obs, configuration=None):
             size = int(math.ceil(defenders)) + 1
             if is_enemy and hold_margin > 0.0:
                 size += int(math.ceil(hold_margin * defenders))   # surplus to hold
+            elif (not is_enemy) and neutral_margin > 0.0:
+                size += int(math.ceil(neutral_margin * (tgt.ships + prod * eta)))  # mass expansion
             shots.append((eta, size, int(src.id), src, angle))
         if not shots:
             continue
@@ -1750,6 +1760,8 @@ def agent(obs, configuration=None):
             dec_size = int(math.ceil(defenders0 + contest)) + 1
             if is_enemy and hold_margin > 0.0:
                 dec_size += int(math.ceil(hold_margin * defenders0))
+            elif (not is_enemy) and neutral_margin > 0.0:
+                dec_size += int(math.ceil(neutral_margin * (float(tgt.ships) + prod * eta0)))
             # Strongest affordable source (most ships) -> big, fast, decisive.
             dec = None
             for (eta, size, sid, src, angle) in sorted(
