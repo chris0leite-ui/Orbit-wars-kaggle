@@ -319,11 +319,6 @@ def _wallclock_ms():
 PROJECT_HORIZON_2P = _i("LR_HORIZON_2P", 18)   # orbit_lite garrison-flow window (2P)
 PROJECT_HORIZON_4P = _i("LR_HORIZON_4P", 13)   # 4P
 ROI_FLOOR = _f("LR_ROI_FLOOR", 1.5)            # min projected net-ship gain to commit (producer's value)
-# Accept floor for the native-leaf builder (LR_NATIVE_BUILDER). The native marginal
-# is a discounted-mean ship-margin (smaller scale than the producer delta) and already
-# prices flip-hazard, so a non-holding grab comes back <= 0. Default 0.0 = accept any
-# strictly-positive improvement, reject far/exposed grabs. Reusing 1.5 would idle it.
-NATIVE_BUILDER_FLOOR = _f("LR_NATIVE_BUILDER_FLOOR", 0.0)
 MAX_CANDIDATES = _i("LR_MAX_CANDIDATES", 28)
 FRONTIER_REF_SHIPS = _f("LR_FRONTIER_REF_SHIPS", 30.0)
 RANK_HINT_SHIPS = 20
@@ -1837,9 +1832,13 @@ def agent(obs, configuration=None):
     avail = dict(available)
     if orbit is not None:
         current = 0.0                       # score of the empty plan
-        # Native builder marginal is a different (smaller) scale than the producer
-        # delta, so it needs its own floor (0.0 = accept any positive improvement).
-        floor = NATIVE_BUILDER_FLOOR if _native_builder() else ROI_FLOOR
+        # The native-builder marginal is a discounted-MEAN ship-margin, so a capture
+        # that flips after a few steps still scores positive (it was owned a while).
+        # A 0 floor therefore accepts doomed captures -> over-commit -> the frontier
+        # collapses (captures not maintained). Require a REAL margin (~3 ships) so
+        # only captures that actually stick are committed. Read at call time (env
+        # override) -- unlike the producer ROI_FLOOR this is tunable per run.
+        floor = _f("LR_NATIVE_BUILDER_FLOOR", 3.0) if _native_builder() else ROI_FLOOR
     else:
         current = value_fallback([])
         floor = 0.5
