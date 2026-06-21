@@ -1424,12 +1424,15 @@ def agent(obs, configuration=None):
             mid = int(mp.id)
             mxy = (float(mp.x), float(mp.y))
             threat = 0.0
+            eta_threat = window
             # (a) strongest enemy PLANET that can reach within the window:
             #     ships + production accrued by arrival (the "count ships+prod" view).
             for q in enemy_planets:
                 eta = dist(mxy, (float(q.x), float(q.y))) / max(1e-6, fleet_speed(float(q.ships)))
                 if eta <= window:
-                    threat = max(threat, float(q.ships) + float(q.production) * eta)
+                    t = float(q.ships) + float(q.production) * eta
+                    if t > threat:
+                        threat, eta_threat = t, eta
             # (b) strongest enemy FLEET already in flight and CLOSING on this planet
             #     (the in-flight attack the leaf threat model misses).
             for f in enemy_fleets:
@@ -1437,14 +1440,26 @@ def agent(obs, configuration=None):
                 eta = dist(mxy, fxy) / max(1e-6, fleet_speed(float(f.ships)))
                 if eta > window:
                     continue
-                # closing = fleet heading points within 90 deg of the planet.
                 closing = (math.cos(float(f.angle)) * (mxy[0] - fxy[0])
                            + math.sin(float(f.angle)) * (mxy[1] - fxy[1])) > 0.0
-                if closing:
-                    threat = max(threat, float(f.ships))
+                if closing and float(f.ships) > threat:
+                    threat, eta_threat = float(f.ships), eta
             if threat <= 0.0:
                 continue                              # not under threat -> no reserve
-            reserve = min(int(mp.ships), int(math.ceil(threat)))
+            # Net of REINFORCEMENT: our OTHER planets that can route ships here BEFORE
+            # the threat lands share the defense, so an isolated planet reserves the
+            # most and a well-supported one barely reserves (frees surplus to expand).
+            # A single distant enemy is thus no longer a full threat to every planet.
+            support = 0.0
+            for o in my_planets:
+                if int(o.id) == mid:
+                    continue
+                if dist(mxy, (float(o.x), float(o.y))) / max(1e-6, fleet_speed(float(o.ships))) <= eta_threat:
+                    support += float(o.ships)
+            need = threat - _f("LR_FLOOR_SUPPORT_W", 1.0) * support
+            if need <= 0.0:
+                continue                              # reinforcement covers it -> no reserve
+            reserve = min(int(mp.ships), int(math.ceil(need)))
             available[mid] = max(0, int(mp.ships) - reserve)
 
     # each candidate: emit=[[src_id,angle,ships],...], units=[(src_slot,tgt_slot,ships,eta),...],
