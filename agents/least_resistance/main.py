@@ -61,6 +61,7 @@ import time
 # ship-count leaf). Remove this block to restore the default-OFF live path.
 os.environ.setdefault("LR_NATIVE_LEAF", "1")
 os.environ.setdefault("LR_NATIVE_REINFORCE", "1")
+os.environ.setdefault("LR_CONCENTRATE", "1")   # additive: decisive captures + value-ordered commit
 # (LR_SKIP_COMETS already defaults to 1.)
 # --------------------------------------------------------------------------
 
