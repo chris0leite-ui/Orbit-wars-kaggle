@@ -1721,14 +1721,16 @@ def agent(obs, configuration=None):
     # Neutral mass margin (PI 2026-06-21, default 0.0 = OFF => byte-identical).
     # Expansion (neutral) captures are otherwise sized to JUST take the empty planet
     # -- a small fleet, which by the size->speed law travels slowly and lands thin, so
-    # we crawl into an undefendable spread. With this margin a CONTESTED neutral is
-    # sized bigger: enough surplus to HOLD it against the strongest enemy force that can
-    # reach it (the `contest` computed per target below) -- safe neutrals (no enemy in
-    # reach) get NO surplus, so expansion stays cheap and fast. (The earlier value*eta
-    # sizing used the slow 20-ship probe eta and over-sized; audit 2026-06-21 finding.)
-    # 2P-ONLY: in 4P (placement / FFA) bigger expansion fleets open windows a third
-    # party punishes and the lever is unvalidated there -> 4P uses LR_NEUTRAL_MARGIN_4P
-    # (default 0) until a 4P seat-rotated A/B.
+    # we crawl into an undefendable spread. With this margin a neutral capture is sized
+    # bigger: faster arrival (less far-dribble) AND surplus garrison to hold the new
+    # planet / stage the next push, scaled by value (production) x travel time.
+    # NOTE (audit 2026-06-21): math review flagged the eta here as the slow 20-ship
+    # probe eta (over-sizes). A contest-based "fix" was tried and REGRESSED 6013/6019
+    # vs V2 -- the speed benefit of bigger fleets on *all* neutrals (not just contested)
+    # is the real mechanism, so we keep this validated value*eta form (the over-sizing
+    # is effectively absorbed into the 0.25 tuning). 2P-ONLY: in 4P (placement / FFA)
+    # bigger expansion fleets open windows a third party punishes and the lever is
+    # unvalidated there -> 4P uses LR_NEUTRAL_MARGIN_4P (default 0) until a 4P A/B.
     neutral_margin = (_f("LR_NEUTRAL_MARGIN", 0.0) if num_seats < 4
                       else _f("LR_NEUTRAL_MARGIN_4P", 0.0))
 
@@ -1767,9 +1769,8 @@ def agent(obs, configuration=None):
             size = int(math.ceil(defenders)) + 1
             if is_enemy and hold_margin > 0.0:
                 size += int(math.ceil(hold_margin * defenders))   # surplus to hold
-            # Neutral mass margin is applied in the DECISIVE path only (it needs the
-            # per-target `contest` to size holdable surplus). The solo/gang path here
-            # is the can't-mass fallback -> keep it minimal.
+            elif (not is_enemy) and neutral_margin > 0.0:
+                size += int(math.ceil(neutral_margin * (tgt.ships + prod * eta)))  # mass expansion
             shots.append((eta, size, int(src.id), src, angle))
         if not shots:
             continue
@@ -1802,12 +1803,7 @@ def agent(obs, configuration=None):
             if is_enemy and hold_margin > 0.0:
                 dec_size += int(math.ceil(hold_margin * defenders0))
             elif (not is_enemy) and neutral_margin > 0.0:
-                # Mass a CONTESTED neutral to hold it: surplus scaled by the strongest
-                # enemy force that can reach the new planet (`contest`). dec_size already
-                # adds full `contest`; this adds the hold BUFFER on top. Safe neutrals
-                # (contest 0) get no surplus -> cheap, fast expansion. (Replaces the
-                # value*eta sizing that used the slow probe eta and over-sized.)
-                dec_size += int(math.ceil(neutral_margin * contest))
+                dec_size += int(math.ceil(neutral_margin * (float(tgt.ships) + prod * eta0)))
             # Strongest affordable source (most ships) -> big, fast, decisive.
             dec = None
             for (eta, size, sid, src, angle) in sorted(
