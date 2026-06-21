@@ -447,6 +447,20 @@ def _teamup():
         "1", "true", "on", "yes")
 
 
+def _frontier():
+    """Default-OFF gate (PI 2026-06-21, LR_FRONTIER). Skip ENEMY targets that sit
+    deep in enemy territory -- where our reinforcement can't follow, so a capture is
+    retaken. A target's DEPTH = dist(target, nearest OUR planet) / dist(target,
+    nearest OTHER enemy planet); depth > LR_FRONTIER_DEPTH (default 1.5) means the
+    target is much closer to the enemy than to us. We then attack only frontier
+    enemy planets (the contested border, depth ~1) we can support, instead of
+    hurling large fleets into the enemy's home cluster (the measured failure: mean
+    attack depth 2.28, 100-210-ship strikes 3-4x deep). NEUTRAL expansion is
+    untouched (filter is enemy-only). Read at call time."""
+    return os.environ.get("LR_FRONTIER", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _iterdeepen():
     """Anytime iterative deepening for the deep rollout (default 0 = OFF, fixed
     depth). When ON, _deep_pick deepens d=1..LR_ROLLOUT_DEPTH within the timebox,
@@ -1674,6 +1688,19 @@ def agent(obs, configuration=None):
         is_comet = tid in comet_ids
         if is_comet and _skip_comets():
             continue                       # comet aim can miss -> oob waste; disabled for now
+        # Frontier filter (default OFF): don't attack an ENEMY planet that sits much
+        # deeper in enemy territory than ours -- we can't reinforce it, so it's
+        # retaken. depth = (dist to nearest OUR planet) / (dist to nearest OTHER
+        # enemy planet); skip when depth > LR_FRONTIER_DEPTH. Neutrals unaffected.
+        if is_enemy and _frontier():
+            txy = (float(tgt.x), float(tgt.y))
+            d_ours = min((dist(txy, (float(p.x), float(p.y))) for p in my_planets),
+                         default=float("inf"))
+            d_enemy = min((dist(txy, (float(p.x), float(p.y))) for p in planets
+                           if int(p.owner) != me and int(p.owner) != -1
+                           and int(p.id) != tid), default=float("inf"))
+            if d_enemy < float("inf") and d_ours > _f("LR_FRONTIER_DEPTH", 1.5) * d_enemy:
+                continue                   # too deep in enemy territory -> unholdable
         prod = float(tgt.production)
 
         shots = []   # (eta, size, sid, src, angle)
