@@ -62,6 +62,7 @@ import time
 os.environ.setdefault("LR_NATIVE_LEAF", "1")
 os.environ.setdefault("LR_NATIVE_REINFORCE", "1")
 os.environ.setdefault("LR_CONCENTRATE", "1")   # additive: decisive captures + value-ordered commit
+os.environ.setdefault("LR_NATIVE_OFFENSE", "1")  # credit massing/holding; far dribble grabs score negative
 # (LR_SKIP_COMETS already defaults to 1.)
 # --------------------------------------------------------------------------
 
