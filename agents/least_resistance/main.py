@@ -233,6 +233,31 @@ def _native_dynamic():
         "1", "true", "on", "yes")
 
 
+def _native_threat_max():
+    """Default-OFF gate (PI 2026-06-21, 'see the attack coming'). With the native
+    leaf, compute the ENEMY ATTACK threat per planet as the worst-case SINGLE enemy
+    planet that can reach it (the `max` aggregation: the full ships+production that
+    one opponent planet can land there), instead of the conserved `allocate` split.
+
+    Observed failure (replay 2026-06-21): an enemy stronghold (~95 ships) within
+    reach of one of our planets is diluted by `allocate` across ALL our reachable
+    planets, so each sees only a fraction (~17 of 95). No planet ever looks
+    endangered, so holding a source is never valued and the search happily drains it
+    into a doomed attack -- then the opponent CONCENTRATES the full stronghold and
+    takes the emptied planet. A real opponent concentrates; `allocate` assumes it
+    disperses. `max` restores the worst-case single-source view so a planet the
+    opponent can flip with one decisive fleet reads as genuinely threatened, which
+    makes HOLDING that garrison the high-value move and punishes draining it.
+
+    Scope: ONLY the enemy attack reach. Our reinforcement reach (def_reach) stays
+    conserved `allocate` -- our finite support genuinely is split across the planets
+    we must cover, so the defense reading stays conservative (enemy concentrates, we
+    spread). OFF = the conserved-allocate threat (byte-identical). Read at call
+    time."""
+    return os.environ.get("LR_NATIVE_THREAT_MAX", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _wallclock_ms():
     """Per-turn budget, read at CALL time. The bundle parity gate sets
     ORBIT_WARS_PARITY_WALLCLOCK_MS huge so the greedy loop never bails
@@ -717,16 +742,28 @@ def _native_value(obs_any, me):
         # the source mass, so the threat/reinforcement rises over the horizon as the
         # opponent (and we) build up, instead of the frozen k_ref snapshot.
         dyn_mbs = ships_traj[0].to(_torch.float32) if _native_dynamic() else None
-        atk_reach = _nf_reach_mass(
-            cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
-            H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
-            aggregate="allocate", our_garrison=ships_ref,
-            alloc_w_prox=_f("LR_ALLOC_W_PROX", 1.0),
-            alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
-            alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5),
-            alloc_eps=_f("LR_ALLOC_EPS", 1.0),
-            mass_by_step=dyn_mbs,
-        )
+        if _native_threat_max():
+            # Concentrated threat (PI 2026-06-21): each planet faces the worst-case
+            # SINGLE enemy planet that can reach it (full ships+production), not the
+            # conserved split -- so a stronghold within reach reads as a real threat
+            # and holding the targeted garrison becomes the valued move. Dynamic mass
+            # / growth still apply; the allocate-only knobs are inert under `max`.
+            atk_reach = _nf_reach_mass(
+                cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
+                H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
+                aggregate="max", mass_by_step=dyn_mbs,
+            )
+        else:
+            atk_reach = _nf_reach_mass(
+                cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
+                H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
+                aggregate="allocate", our_garrison=ships_ref,
+                alloc_w_prox=_f("LR_ALLOC_W_PROX", 1.0),
+                alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
+                alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5),
+                alloc_eps=_f("LR_ALLOC_EPS", 1.0),
+                mass_by_step=dyn_mbs,
+            )
     else:
         atk_reach = _nf_reach_mass(
             cross_dist=cache.cross_dist, ships=ships0, is_enemy=is_enemy, H=int(H),

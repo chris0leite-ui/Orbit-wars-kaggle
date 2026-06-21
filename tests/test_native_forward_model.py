@@ -62,6 +62,42 @@ def test_reachable_mass_cumulative_and_enemy_only():
     assert float(reach[0].max()) == 0.0
 
 
+def test_max_threat_concentrates_where_allocate_dilutes():
+    """The LR_NATIVE_THREAT_MAX fix (PI 2026-06-21): one enemy stronghold within
+    reach of SEVERAL of our planets must threaten EACH with its full mass under
+    `max` (worst-case single attacker), whereas `allocate` SPLITS that mass across
+    them so each sees only a fraction -- the dilution that hid the incoming attack
+    and let the search drain a defended source."""
+    # planets 0..3 are ours; planet 4 is the lone enemy stronghold reachable to
+    # all of ours from step 1.
+    P, H = 5, 6
+    big = 1e6
+    cross = torch.full((H + 1, P, P), big)
+    for k in range(H + 1):
+        for t in range(4):
+            cross[k, 4, t] = 0.5            # enemy(4) reaches each of our planets
+    ships = torch.tensor([90.0, 90.0, 90.0, 90.0, 95.0])   # stronghold = 95
+    prod = torch.tensor([5.0, 5.0, 5.0, 5.0, 5.0])
+    is_enemy = torch.tensor([False, False, False, False, True])
+
+    mx = reachable_enemy_mass(cross_dist=cross, ships=ships, is_enemy=is_enemy,
+                              H=H, aggregate="max")
+    al = reachable_enemy_mass(cross_dist=cross, ships=ships, is_enemy=is_enemy,
+                              H=H, aggregate="allocate", prod=prod,
+                              our_garrison=ships)
+    # MAX: every one of our planets sees the FULL 95 (worst-case concentrated hit).
+    for t in range(4):
+        assert abs(float(mx[t, H]) - 95.0) < 1e-4
+    # ALLOCATE: the 95 is CONSERVED across our planets -> each sees only a share,
+    # and the shares sum to ~the stronghold's mass (not 4x it).
+    shares = [float(al[t, H]) for t in range(4)]
+    assert all(s < 95.0 for s in shares)
+    assert abs(sum(shares) - 95.0) < 1.0
+    # The diluted share is far below the garrison (90) -> looks safe; the
+    # concentrated view (95) does not. This is exactly the decision the fix flips.
+    assert max(shares) < 90.0 < 95.0
+
+
 def test_threat_growth_adds_prod_times_k_alpha():
     """Anticipatory growth: the reachable enemy reservoir rises by prod*alpha*k."""
     P, H = 3, 6
