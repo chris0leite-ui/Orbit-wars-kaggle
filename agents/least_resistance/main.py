@@ -205,7 +205,16 @@ def _lead_gate():
     """Default-OFF gate. When ON, the leaf is lead-aware: it smoothly blends toward
     the worst-case concentrated threat as we get further AHEAD (hold a defensive
     reserve, defend the lead) and toward more offense as we fall BEHIND (gamble for
-    the comeback). Read at call time."""
+    the comeback). Read at call time.
+
+    STATUS (2026-06-21): REFUTED at replay level, kept default-OFF. Both the binary
+    and this smooth/hysteretic version regress the validated wins vs Producer V2
+    (smooth: 6013/6019/1127764379 WIN->loss, fixes 0 losses). Reason: we win by
+    RELENTLESS SNOWBALLING (every win-trace is monotonic production growth);
+    'defend the lead' (worst-case threat when ahead) suppresses the snowball that
+    wins. The win-equity/defend-the-lead frame is wrong for this matchup -- the cure
+    for lead-then-collapse is to press/expand harder (neutral margin), not defend.
+    See knowledge-base/thoughts/2026-06-21-lead-gate-refuted-snowball.md."""
     return _cfg("LR_LEAD_GATE").strip().lower() in ("1", "true", "on", "yes")
 
 
