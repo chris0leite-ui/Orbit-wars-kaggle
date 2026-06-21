@@ -433,6 +433,20 @@ def _concentrate():
         "1", "true", "on", "yes")
 
 
+def _teamup():
+    """Default-OFF gate (PI 2026-06-21, LR_TEAMUP). With the decisive capture, when
+    NO single source can field the decisive (take + beat-the-retake + hold) size,
+    COMBINE the nearest-ETA sources into one strike that reaches that size -- so a
+    contested corner is taken with enough force to HOLD, instead of falling through
+    to the thin gang-up (sized to defenders only, no contest/hold) that gets
+    retaken. The native builder leaf validates the combined strike actually holds
+    (a too-staggered team-up scores low and isn't committed). Standalone flag (NOT
+    folded into LR_CONCENTRATE) so the shipped concentrate stack stays byte-
+    identical. Read at call time."""
+    return os.environ.get("LR_TEAMUP", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _iterdeepen():
     """Anytime iterative deepening for the deep rollout (default 0 = OFF, fixed
     depth). When ON, _deep_pick deepens d=1..LR_ROLLOUT_DEPTH within the timebox,
@@ -1725,6 +1739,34 @@ def agent(obs, configuration=None):
                            "units": units, "srcs": {sid: dec_size},
                            "rank": rank, "front": front}
                     break
+            if dec is None and _teamup():
+                # TEAM UP (PI 2026-06-21): no single source can field the decisive
+                # (take + contest + hold) size -> pool the nearest-ETA sources
+                # (arrivals clustered) until the combined mass reaches dec_size, so
+                # the corner is taken with enough force to HOLD instead of the thin
+                # gang-up below. The native builder leaf validates holdability.
+                t_emit, t_triples, t_srcs, acc = [], [], {}, 0
+                for (eta, size, sid, src, angle) in sorted(shots, key=lambda s: s[0]):
+                    if sid in t_srcs:
+                        continue
+                    take = min(available[sid], dec_size - acc)
+                    if take <= 0:
+                        continue
+                    shot = _plan_shot(src, tgt, comet_ids, comet_paths, omega, take)
+                    if shot is None:
+                        continue
+                    a2, eta2, _ = shot
+                    t_emit.append([sid, float(a2), take])
+                    t_triples.append((sid, tid, take, eta2))
+                    t_srcs[sid] = take
+                    acc += take
+                    if acc >= dec_size:
+                        break
+                if acc >= dec_size and len(t_emit) >= 2:
+                    units = units_for(t_triples)
+                    if not (units is None and id2slot is not None):
+                        dec = {"emit": t_emit, "units": units, "srcs": t_srcs,
+                               "rank": rank, "front": front, "kind": "teamup"}
             if dec is not None:
                 candidates.append(dec)
                 continue
