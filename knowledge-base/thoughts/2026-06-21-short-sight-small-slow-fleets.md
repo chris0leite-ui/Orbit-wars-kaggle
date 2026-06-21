@@ -49,3 +49,32 @@ Watch: does it fix the lead-then-collapse losses (6013, 6007) WITHOUT breaking t
 comeback win (6031) or the clean wins — and crucially watch **turn-ms** (a longer
 horizon is more compute; the ladder has a per-turn wall). Combine with the builder if
 sight alone is insufficient.
+
+## Result — neutral mass margin (LR_NEUTRAL_MARGIN), 2P vs V2, seat 0 (replay, NOT n>=32)
+
+PI picked "bigger expansion fleets." Implemented LR_NEUTRAL_MARGIN (default-OFF):
+neutral capture size += margin * (tgt.ships + prod*eta), applied in the regular and
+decisive sizing paths. OFF (0.0) => byte-identical.
+
+| seed (seat0)   | baseline | NM=0.25 | NM=0.5 |
+|----------------|----------|---------|--------|
+| 6013           | loss     | WIN     | loss   |
+| 6019           | loss     | WIN     | -      |
+| 6031           | WIN      | WIN     | WIN    |
+| 1127764379     | WIN      | WIN     | loss   |
+| 6007           | loss     | loss    | loss   |
+| 6001           | loss     | loss    | -      |
+| 6025           | loss     | loss    | -      |
+
+- **NM=0.25 is the sweet spot:** seat-0 win-rate 2/7 -> 4/7, **breaks nothing**,
+  timing safe (max ~600ms). Fixes 6013 + 6019 (the expansion-collapse losses).
+- **NM=0.5 over-masses:** parks ships idle on SAFE neutrals -> breaks 1127764379 (a
+  clean win) and doesn't fix 6013. Lesson: more mass on uncontested neutrals is waste;
+  the benefit is the speed-up + holdability, not unconditional surplus. A future
+  refinement could condition the surplus on the contest/threat to the new planet
+  (cheap fleets for safe neutrals, massed for contested), instead of pure value*eta.
+- **6007/6001/6025 unfixed:** these are SCATTERED ENEMY-ATTACK losses (the builder
+  pokes), not expansion-sizing -- NATIVE_BUILDER fixed 6007 earlier. Different lever.
+
+Caveat (Rule 45): seat-0-only, small sample -- suggestive, NOT a ship gate. Needs an
+n>=32 seat-rotated paired A/B vs V2 before any submission.
