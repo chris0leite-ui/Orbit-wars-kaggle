@@ -190,29 +190,28 @@ def _native_leaf():
         "1", "true", "on", "yes")
 
 
-# ---- lead-gated win-equity (PI 2026-06-21, audit point 3) -----------------
-# Per-turn signal set by agent(): are we AHEAD on production right now? The leaf
-# reads it to DEFEND a lead (concentrated worst-case threat) and to SEEK VARIANCE
-# when behind (boost the offense weight). This is one cheap signal measured once
-# on the current board, NOT per candidate -> no tensor doubling on the hot path.
-# Module-level per-turn state, reset every agent() call -- NOT os.environ, so it
-# does not reintroduce the C1 process-global leak.
-_LEAD_STATE = None   # "ahead" | "behind" | None (gate off / unknown)
+# ---- lead-gated win-equity (PI 2026-06-21, audit point 3; smooth rework) --
+# Per-turn DEFENSIVENESS scalar d in [0,1] set by agent(): 0 = far behind (play like
+# the validated default), 1 = far ahead (fully defensive). The leaf BLENDS its two
+# threat readings by d (continuous), instead of a hard ahead/behind switch -- the
+# binary v1 flapped turn-to-turn and regressed the validated wins. d is a smoothed
+# sigmoid of the production gap (EMA across turns = hysteresis). Module-level
+# per-turn/per-game state -- NOT os.environ, so no C1 process-global leak.
+_LEAD_D = None        # float in [0,1], or None (gate off / unknown)
+_LEAD_LAST_STEP = -1  # last obs step seen, to reset the EMA at a new game
 
 
 def _lead_gate():
-    """Default-OFF gate. When ON, the leaf is lead-aware: worst-case concentrated
-    threat when ahead (hold a defensive reserve), boosted offense when behind
-    (gamble for the comeback). Read at call time."""
+    """Default-OFF gate. When ON, the leaf is lead-aware: it smoothly blends toward
+    the worst-case concentrated threat as we get further AHEAD (hold a defensive
+    reserve, defend the lead) and toward more offense as we fall BEHIND (gamble for
+    the comeback). Read at call time."""
     return _cfg("LR_LEAD_GATE").strip().lower() in ("1", "true", "on", "yes")
 
 
-def _lead_ahead():
-    return _LEAD_STATE == "ahead"
-
-
-def _lead_behind():
-    return _LEAD_STATE == "behind"
+def _lead_d():
+    """The current smoothed defensiveness in [0,1], or None when the gate is off."""
+    return _LEAD_D
 
 
 def _native_strict():
@@ -779,6 +778,41 @@ def _project_outcome(obs_any, me, horizon=None):
 _NATIVE_LEAF_CALLS = 0    # proof the native leaf actually executed (env swallows stderr)
 
 
+def _blend_atk_reach(cache, ships_ref, is_enemy, H, prod, dyn_mbs):
+    """Defensive threat reach [P,H+1] for the native leaf. Default = conserved
+    `allocate` (enemy mass split across our reachable planets -- the validated path).
+    Hard `_native_threat_max` forces the worst-case single-stronghold `max`. Lead-gate
+    (smooth rework, audit point 3): blend (1-d)*allocate + d*max by the current
+    defensiveness d -> as we get further AHEAD the leaf reads the concentrated punch
+    and values holding a reserve; when BEHIND it stays on the validated `allocate`
+    reading. Skips the second tensor at the d extremes (timing). Shared by both leaf
+    functions so they cannot drift on this block."""
+    ga = _f("LR_NATIVE_THREAT_GROWTH", 0.0)
+
+    def _mx():
+        return _nf_reach_mass(
+            cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
+            H=int(H), prod=prod, growth_alpha=ga, aggregate="max", mass_by_step=dyn_mbs)
+
+    def _al():
+        return _nf_reach_mass(
+            cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
+            H=int(H), prod=prod, growth_alpha=ga, aggregate="allocate", our_garrison=ships_ref,
+            alloc_w_prox=_f("LR_ALLOC_W_PROX", 1.0), alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
+            alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5), alloc_eps=_f("LR_ALLOC_EPS", 1.0),
+            mass_by_step=dyn_mbs)
+
+    if _native_threat_max():
+        return _mx()
+    d = _lead_d() if _lead_gate() else None
+    if d is None or d <= 0.05:
+        return _al()
+    if d >= 0.95:
+        return _mx()
+    return (1.0 - d) * _al() + d * _mx()
+
+
+
 def _native_value(obs_any, me):
     """Dropout-NATIVE position value: expected SHIP-MARGIN under a per-step
     flip-hazard forward model (PI 2026-06-20; reuses agents/producer/orbit_lite/
@@ -832,31 +866,7 @@ def _native_value(obs_any, me):
         # the source mass, so the threat/reinforcement rises over the horizon as the
         # opponent (and we) build up, instead of the frozen k_ref snapshot.
         dyn_mbs = ships_traj[0].to(_torch.float32) if _native_dynamic() else None
-        if _native_threat_max() or (_lead_gate() and _lead_ahead()):
-            # Concentrated threat (PI 2026-06-21): each planet faces the worst-case
-            # SINGLE enemy planet that can reach it (full ships+production), not the
-            # conserved split -- so a stronghold within reach reads as a real threat
-            # and holding the targeted garrison becomes the valued move. Dynamic mass
-            # / growth still apply; the allocate-only knobs are inert under `max`.
-            # Lead-gate (audit point 3): when we are AHEAD, switch to this worst-case
-            # reading so the agent holds a reserve and defends the lead instead of
-            # blowing it (the dispersed `allocate` makes a concentrated punch invisible).
-            atk_reach = _nf_reach_mass(
-                cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
-                H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
-                aggregate="max", mass_by_step=dyn_mbs,
-            )
-        else:
-            atk_reach = _nf_reach_mass(
-                cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
-                H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
-                aggregate="allocate", our_garrison=ships_ref,
-                alloc_w_prox=_f("LR_ALLOC_W_PROX", 1.0),
-                alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
-                alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5),
-                alloc_eps=_f("LR_ALLOC_EPS", 1.0),
-                mass_by_step=dyn_mbs,
-            )
+        atk_reach = _blend_atk_reach(cache, ships_ref, is_enemy, int(H), prod, dyn_mbs)
     else:
         atk_reach = _nf_reach_mass(
             cross_dist=cache.cross_dist, ships=ships0, is_enemy=is_enemy, H=int(H),
@@ -882,11 +892,12 @@ def _native_value(obs_any, me):
             alloc_eps=_f("LR_ALLOC_EPS", 1.0),
         )
         off_weight = _f("LR_NATIVE_OFFENSE_W", 0.5)
-        if _lead_gate() and _lead_behind():
-            # Lead-gate (audit point 3): when BEHIND, seek variance -- weight the
-            # offensive capture-potential higher so swingy, board-flipping captures
-            # out-score safe consolidation (the comeback line).
-            off_weight *= _f("LR_LEAD_OFFENSE_BOOST", 1.5)
+        _ld_off = _lead_d() if _lead_gate() else None
+        if _ld_off is not None:
+            # Lead-gate (smooth, audit point 3): scale offense up the more BEHIND we
+            # are (1-d), none extra when far ahead -- seek variance for the comeback,
+            # continuously (no flapping binary switch).
+            off_weight *= (1.0 + _f("LR_LEAD_OFFENSE_BOOST", 0.5) * (1.0 - _ld_off))
         off_steepness = _f("LR_NATIVE_OFFENSE_STEEPNESS", 5.0)
     def_reach = None
     def_weight = 0.0
@@ -967,24 +978,7 @@ def _build_native_scorer(obs, me):
         k_ref = min(int(H), _i("LR_NATIVE_REINF_STEP", 3))
         ships_ref = base_ships[0, :, k_ref].to(_torch.float32)
         dyn_mbs = base_ships[0].to(_torch.float32) if _native_dynamic() else None
-        if _native_threat_max() or (_lead_gate() and _lead_ahead()):
-            # Lead-gate (audit point 3): worst-case concentrated threat when ahead, so
-            # the builder leaf defends a lead. Mirrors _native_value (kept in sync).
-            atk_reach = _nf_reach_mass(
-                cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
-                H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
-                aggregate="max", mass_by_step=dyn_mbs,
-            )
-        else:
-            atk_reach = _nf_reach_mass(
-                cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
-                H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
-                aggregate="allocate", our_garrison=ships_ref,
-                alloc_w_prox=_f("LR_ALLOC_W_PROX", 1.0),
-                alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
-                alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5),
-                alloc_eps=_f("LR_ALLOC_EPS", 1.0), mass_by_step=dyn_mbs,
-            )
+        atk_reach = _blend_atk_reach(cache, ships_ref, is_enemy, int(H), prod, dyn_mbs)
     else:
         ships_ref = ships0
         dyn_mbs = None
@@ -1007,11 +1001,12 @@ def _build_native_scorer(obs, me):
             alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5), alloc_eps=_f("LR_ALLOC_EPS", 1.0),
         )
         off_weight = _f("LR_NATIVE_OFFENSE_W", 0.5)
-        if _lead_gate() and _lead_behind():
-            # Lead-gate (audit point 3): when BEHIND, seek variance -- weight the
-            # offensive capture-potential higher so swingy, board-flipping captures
-            # out-score safe consolidation (the comeback line).
-            off_weight *= _f("LR_LEAD_OFFENSE_BOOST", 1.5)
+        _ld_off = _lead_d() if _lead_gate() else None
+        if _ld_off is not None:
+            # Lead-gate (smooth, audit point 3): scale offense up the more BEHIND we
+            # are (1-d), none extra when far ahead -- seek variance for the comeback,
+            # continuously (no flapping binary switch).
+            off_weight *= (1.0 + _f("LR_LEAD_OFFENSE_BOOST", 0.5) * (1.0 - _ld_off))
         off_steepness = _f("LR_NATIVE_OFFENSE_STEEPNESS", 5.0)
     def_reach = None
     def_weight = 0.0
@@ -1586,10 +1581,11 @@ def agent(obs, configuration=None):
     comet_ids = frozenset(int(c) for c in (obs_d.get("comet_planet_ids", []) or []))
     comet_paths = _comet_paths_by_id_safe(obs_d) if comet_ids else {}
 
-    # Lead-gated win-equity (audit point 3): measure who is ahead on production NOW,
-    # once per turn, and stash it for the leaf. Production = the win driver (compounds);
-    # ties count as ahead (defend). Reset to None when the gate is off.
-    global _LEAD_STATE
+    # Lead-gated win-equity (audit point 3, smooth rework): defensiveness d in [0,1]
+    # from a SMOOTH sigmoid of the production gap vs the strongest rival, with an EMA
+    # across turns (hysteresis) so it can't flap. Production = the win driver. d->1
+    # far ahead (defend), d->0 far behind (= validated default + more offense).
+    global _LEAD_D, _LEAD_LAST_STEP
     if _lead_gate():
         prod_by_owner = {}
         for p in planets:
@@ -1598,9 +1594,21 @@ def agent(obs, configuration=None):
                 prod_by_owner[o] = prod_by_owner.get(o, 0.0) + float(p.production)
         my_p = prod_by_owner.get(me, 0.0)
         opp_p = max((v for o, v in prod_by_owner.items() if o != me), default=0.0)
-        _LEAD_STATE = "ahead" if my_p >= opp_p * (1.0 + _f("LR_LEAD_DEADBAND", 0.0)) else "behind"
+        denom = my_p + opp_p
+        g = (my_p - opp_p) / denom if denom > 0.0 else 0.0          # gap in [-1,1]
+        k = _f("LR_LEAD_STEEPNESS", 5.0)
+        d_raw = 1.0 / (1.0 + math.exp(-k * g))                      # sigmoid -> [0,1]
+        step = int(obs_d.get("step", 0) or 0)
+        if _LEAD_D is None or step <= 0 or step < _LEAD_LAST_STEP:
+            d = d_raw                                               # new game -> no EMA history
+        else:
+            a = _f("LR_LEAD_EMA", 0.4)
+            d = a * d_raw + (1.0 - a) * _LEAD_D                     # hysteresis
+        _LEAD_D = d
+        _LEAD_LAST_STEP = step
     else:
-        _LEAD_STATE = None
+        _LEAD_D = None
+        _LEAD_LAST_STEP = -1
 
     # ---- choose the evaluator (producer-strength orbit_lite, else fast_sim) ----
     use_orbit = _ORBIT_OK and FORCE_EVAL != "fallback"

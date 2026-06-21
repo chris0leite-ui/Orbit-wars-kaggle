@@ -3,7 +3,8 @@
 - C1: importing main.py must NOT mutate os.environ (the old os.environ.setdefault
   bake leaked the shipped config process-wide into tests / AB harnesses).
 - The shipped config is resolved from _SHIP_DEFAULTS at call time (env overrides).
-- Lead-gated win-equity (point 3): agent() sets _LEAD_STATE per turn when ON, None OFF.
+- Lead-gated win-equity (point 3): agent() sets a smoothed _LEAD_D in [0,1] when ON,
+  None OFF; the EMA resets at a new game (step 0).
 - Neutral mass margin (points 2/4): default 0.25 in 2P, OFF (LR_NEUTRAL_MARGIN_4P=0)
   in 4P; the agent runs legally with the full new stack.
 """
@@ -17,7 +18,7 @@ sys.path.insert(0, str(REPO))
 
 _LR_KEYS = ("LR_NATIVE_LEAF", "LR_NATIVE_REINFORCE", "LR_CONCENTRATE",
             "LR_NATIVE_OFFENSE", "LR_NEUTRAL_MARGIN", "LR_NEUTRAL_MARGIN_4P",
-            "LR_LEAD_GATE", "LR_LEAD_OFFENSE_BOOST", "LR_LEAD_DEADBAND")
+            "LR_LEAD_GATE", "LR_LEAD_OFFENSE_BOOST", "LR_LEAD_STEEPNESS", "LR_LEAD_EMA")
 
 
 def _load_clean():
@@ -75,20 +76,39 @@ def test_lead_gate_default_off():
     assert lr._lead_gate() is False
 
 
-def test_lead_gate_sets_state_on_and_clears_off():
+def test_lead_gate_sets_smoothed_d_on_and_clears_off():
     lr = _load_clean()
     obs = _initial_obs()
-    # OFF: state stays None.
+    # OFF: defensiveness stays None.
     os.environ.pop("LR_LEAD_GATE", None)
     out = lr.agent(obs, None)
     assert isinstance(out, list)
-    assert lr._LEAD_STATE is None
-    # ON: state is a concrete ahead/behind verdict.
+    assert lr._lead_d() is None
+    # ON: defensiveness is a smooth float in [0,1].
     os.environ["LR_LEAD_GATE"] = "1"
     try:
         out = lr.agent(obs, None)
         assert isinstance(out, list)
-        assert lr._LEAD_STATE in ("ahead", "behind")
+        d = lr._lead_d()
+        assert d is not None and 0.0 <= d <= 1.0
+    finally:
+        os.environ.pop("LR_LEAD_GATE", None)
+
+
+def test_lead_ema_resets_on_new_game():
+    # A step-0 (new game) obs must reset the EMA to the raw sigmoid (no carryover),
+    # so multiple games in one process don't bleed defensiveness across each other.
+    lr = _load_clean()
+    os.environ["LR_LEAD_GATE"] = "1"
+    try:
+        obs = _initial_obs()  # step 0
+        lr._LEAD_D = 0.999     # stale value from a prior game
+        lr._LEAD_LAST_STEP = 500
+        lr.agent(obs, None)
+        # After a step-0 turn the value is the raw sigmoid of the start gap, not the
+        # stale 0.999 carried through the EMA.
+        assert lr._LEAD_D is not None and abs(lr._LEAD_D - 0.999) > 1e-6
+        assert 0.0 <= lr._LEAD_D <= 1.0
     finally:
         os.environ.pop("LR_LEAD_GATE", None)
 
