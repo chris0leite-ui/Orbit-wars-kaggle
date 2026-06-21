@@ -54,3 +54,37 @@ The prior session built three levers for exactly this and left them OFF/unvalida
 Next action: reproduce the 6013 + 6007 seat-0 losses, switch these on (alone and
 combined), re-render, confirm the collapse is gone WITHOUT breaking the clean wins
 (1127764379, 6031, 6007-seat1), send before/after to PI to watch.
+
+## Experiment results (2P vs V2, seat 0, replay watching — NOT n>=32 A/B)
+
+Reproduce-fix-confirm on the failing seeds + regression check on wins:
+
+| seed (seat 0)         | baseline | GARRISON_FLOOR | NATIVE_BUILDER | FLOOR+BUILDER | THREAT_MAX | ALL3 |
+|-----------------------|----------|----------------|----------------|---------------|------------|------|
+| 6013 (PI watched)     | loss     | WIN            | WIN            | WIN           | WIN        | WIN  |
+| 6007 (scattered atk)  | loss     | loss           | WIN            | WIN           | loss       | loss |
+| 6031 (comeback win)   | WIN      | WIN            | loss           | loss          | -          | -    |
+| 1127764379 (clean win)| WIN      | -              | WIN            | -             | -          | -    |
+| 6007 seat1 (win map)  | WIN      | -              | WIN            | -             | -          | -    |
+| 106499442 (old loss)  | loss     | -              | loss           | loss          | -          | -    |
+
+Findings:
+- **NATIVE_BUILDER is the lever that matches the diagnosis** and fixes BOTH PI-watched
+  losses (6013 lead-hold, 6007 scattered-attack). On 6007 it also cut launches 183->93
+  (half the scatter) — exactly the "stop building bad attacks" effect.
+- **It is a TRADE, not a free win:** it breaks 6031, a game baseline WON *by coming from
+  behind*. The builder's hold-aware conservatism suppresses the aggressive comeback. So:
+  builder helps HOLD leads, can hurt when BEHIND.
+- **GARRISON_FLOOR is safe but incomplete:** fixes 6013, KEEPS 6031, but cannot fix 6007
+  (it only reserves defense; it does not stop bad attacks being generated).
+- **THREAT_MAX over-constrains:** fixes only 6013; ALL3 (which adds it) BREAKS 6007 that
+  BUILDER alone won. Keep THREAT_MAX OFF.
+- 106499442 not fixed by any tested config — a distinct failure (different map), needs
+  its own look.
+
+Implication: the clean single-mechanism fix for the PI's complaint is NATIVE_BUILDER,
+but it needs (a) a proper n>=32 paired A/B vs V2 before any submit (Rule 45), and
+(b) a likely refinement so it does not go passive when behind (allow aggression on the
+comeback maps). Candidate refinement: gate the builder's conservatism on whether we are
+ahead/behind on production, OR keep builder for target SELECTION but not suppress
+comeback aggression. Decision deferred to PI after watching the before/after replays.
