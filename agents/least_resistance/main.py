@@ -54,17 +54,28 @@ import random
 import sys
 import time
 
-# ---- SUBMISSION BAKE (PI 2026-06-20) -------------------------------------
-# Ship the native ship-margin leaf + reinforcement-race holdability as the
-# default for this submission. Gates still read os.environ at call time, so an
-# explicit env var overrides this (e.g. LR_NATIVE_LEAF=0 reverts to the
-# ship-count leaf). Remove this block to restore the default-OFF live path.
-os.environ.setdefault("LR_NATIVE_LEAF", "1")
-os.environ.setdefault("LR_NATIVE_REINFORCE", "1")
-os.environ.setdefault("LR_CONCENTRATE", "1")   # additive: decisive captures + value-ordered commit
-os.environ.setdefault("LR_NATIVE_OFFENSE", "1")  # credit massing/holding; far dribble grabs score negative
-os.environ.setdefault("LR_NEUTRAL_MARGIN", "0.25")  # mass expansion fleets: faster arrival + land defendable
-# (LR_SKIP_COMETS already defaults to 1.)
+# ---- SUBMISSION CONFIG (PI 2026-06-20) -----------------------------------
+# The shipped config is a CODE property, not a global side effect: gates fall
+# back to _SHIP_DEFAULTS at call time, so we never mutate os.environ (an earlier
+# os.environ.setdefault bake leaked this config process-wide into tests / AB
+# harnesses -- see audit/2026-06-21-three-lens-review.md, finding C1). An explicit
+# env var still overrides (e.g. LR_NATIVE_LEAF=0 reverts to the ship-count leaf);
+# any gate NOT listed here keeps its default-OFF behaviour.
+_SHIP_DEFAULTS = {
+    "LR_NATIVE_LEAF": "1",
+    "LR_NATIVE_REINFORCE": "1",
+    "LR_CONCENTRATE": "1",      # additive: decisive captures + value-ordered commit
+    "LR_NATIVE_OFFENSE": "1",   # credit massing/holding; far dribble grabs score negative
+    "LR_NEUTRAL_MARGIN": "0.25",  # mass expansion fleets: faster arrival + land defendable
+    # (LR_SKIP_COMETS already defaults to 1.)
+}
+
+
+def _cfg(name, fallback="0"):
+    """Resolve a config knob: explicit env var wins, else the shipped default,
+    else `fallback`. Read at call time; never mutates os.environ."""
+    v = os.environ.get(name)
+    return v if v is not None else _SHIP_DEFAULTS.get(name, fallback)
 # --------------------------------------------------------------------------
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
@@ -103,6 +114,14 @@ try:
     if _PRODUCER_DIR not in sys.path:
         sys.path.insert(0, _PRODUCER_DIR)
     import torch as _torch
+    # Pin to a single thread: the ladder host is ~1.6 CPU, small-tensor ops are
+    # often SLOWER multi-threaded (thread overhead) and float reductions reorder
+    # across thread counts (breaks the "value is a pure function of obs" parity the
+    # eval harness relies on). API call only -- no os.environ mutation.
+    try:
+        _torch.set_num_threads(1)
+    except Exception:
+        pass
     from orbit_lite.adapter import single_obs_to_tensor as _single_obs_to_tensor
     from orbit_lite.adapter import sparse_action_row_to_moves as _sparse_action_row_to_moves
     from orbit_lite.movement import MovementConfig as _MovementConfig
@@ -139,14 +158,14 @@ from lib.value_heads import inflight_value
 # --------------------------------------------------------------------------
 def _i(name, default):
     try:
-        return int(os.environ.get(name, default))
+        return int(_cfg(name, default))
     except (TypeError, ValueError):
         return default
 
 
 def _f(name, default):
     try:
-        return float(os.environ.get(name, default))
+        return float(_cfg(name, default))
     except (TypeError, ValueError):
         return default
 
@@ -167,8 +186,33 @@ def _native_leaf():
     snapshot. This prices captures that won't hold (the opponent retakes) and gives
     the native model the multi-ply it lacked as a standalone one-ply scorer (the
     2026-06-19 plateau). OFF = byte-identical ship-count path. Read at call time."""
-    return os.environ.get("LR_NATIVE_LEAF", "0").strip().lower() in (
+    return _cfg("LR_NATIVE_LEAF").strip().lower() in (
         "1", "true", "on", "yes")
+
+
+# ---- lead-gated win-equity (PI 2026-06-21, audit point 3) -----------------
+# Per-turn signal set by agent(): are we AHEAD on production right now? The leaf
+# reads it to DEFEND a lead (concentrated worst-case threat) and to SEEK VARIANCE
+# when behind (boost the offense weight). This is one cheap signal measured once
+# on the current board, NOT per candidate -> no tensor doubling on the hot path.
+# Module-level per-turn state, reset every agent() call -- NOT os.environ, so it
+# does not reintroduce the C1 process-global leak.
+_LEAD_STATE = None   # "ahead" | "behind" | None (gate off / unknown)
+
+
+def _lead_gate():
+    """Default-OFF gate. When ON, the leaf is lead-aware: worst-case concentrated
+    threat when ahead (hold a defensive reserve), boosted offense when behind
+    (gamble for the comeback). Read at call time."""
+    return _cfg("LR_LEAD_GATE").strip().lower() in ("1", "true", "on", "yes")
+
+
+def _lead_ahead():
+    return _LEAD_STATE == "ahead"
+
+
+def _lead_behind():
+    return _LEAD_STATE == "behind"
 
 
 def _native_strict():
@@ -204,7 +248,7 @@ def _native_offense():
     realized margin (decisive action wins). One coherent value term for the dribble /
     no-concentration / launch-every-round behaviour. OFF = byte-identical. Read at
     call time."""
-    return os.environ.get("LR_NATIVE_OFFENSE", "0").strip().lower() in (
+    return _cfg("LR_NATIVE_OFFENSE").strip().lower() in (
         "1", "true", "on", "yes")
 
 
@@ -218,7 +262,7 @@ def _native_reinforce():
     self-penalizes (support spread thin). Routes the enemy threat through allocate
     too (apples-to-apples conserved contest). OFF = byte-identical. Read at call
     time."""
-    return os.environ.get("LR_NATIVE_REINFORCE", "0").strip().lower() in (
+    return _cfg("LR_NATIVE_REINFORCE").strip().lower() in (
         "1", "true", "on", "yes")
 
 
@@ -425,12 +469,12 @@ def _decisive_capture():
 
 def _concentrate():
     """Default-OFF gate (PI 2026-06-20 redesign). When ON (with the native leaf), the
-    2-ply chooses among a CONCENTRATED, value-ordered menu only -- idle + the top-1..m
-    best objectives -- with the scattered producer-floor move DROPPED. So the emitted
-    move is at most m best objectives (or idle/hold), structurally concentrated; the
-    leaf can no longer escape to the producer's scattered move. OFF = original menu.
-    Read at call time."""
-    return os.environ.get("LR_CONCENTRATE", "0").strip().lower() in (
+    2-ply menu ADDS decisive single-fleet captures (sized to beat defenders + contest)
+    and a value-ordered commit so concentration prefixes are evaluated best-first. The
+    producer-floor move (`producer_me`) is STILL kept in the menu as the >=-producer
+    anti-passivity backstop (see the menu construction; it is intentionally not
+    dropped). OFF = original menu. Read at call time."""
+    return _cfg("LR_CONCENTRATE").strip().lower() in (
         "1", "true", "on", "yes")
 
 
@@ -788,12 +832,15 @@ def _native_value(obs_any, me):
         # the source mass, so the threat/reinforcement rises over the horizon as the
         # opponent (and we) build up, instead of the frozen k_ref snapshot.
         dyn_mbs = ships_traj[0].to(_torch.float32) if _native_dynamic() else None
-        if _native_threat_max():
+        if _native_threat_max() or (_lead_gate() and _lead_ahead()):
             # Concentrated threat (PI 2026-06-21): each planet faces the worst-case
             # SINGLE enemy planet that can reach it (full ships+production), not the
             # conserved split -- so a stronghold within reach reads as a real threat
             # and holding the targeted garrison becomes the valued move. Dynamic mass
             # / growth still apply; the allocate-only knobs are inert under `max`.
+            # Lead-gate (audit point 3): when we are AHEAD, switch to this worst-case
+            # reading so the agent holds a reserve and defends the lead instead of
+            # blowing it (the dispersed `allocate` makes a concentrated punch invisible).
             atk_reach = _nf_reach_mass(
                 cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
                 H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
@@ -835,6 +882,11 @@ def _native_value(obs_any, me):
             alloc_eps=_f("LR_ALLOC_EPS", 1.0),
         )
         off_weight = _f("LR_NATIVE_OFFENSE_W", 0.5)
+        if _lead_gate() and _lead_behind():
+            # Lead-gate (audit point 3): when BEHIND, seek variance -- weight the
+            # offensive capture-potential higher so swingy, board-flipping captures
+            # out-score safe consolidation (the comeback line).
+            off_weight *= _f("LR_LEAD_OFFENSE_BOOST", 1.5)
         off_steepness = _f("LR_NATIVE_OFFENSE_STEEPNESS", 5.0)
     def_reach = None
     def_weight = 0.0
@@ -915,7 +967,9 @@ def _build_native_scorer(obs, me):
         k_ref = min(int(H), _i("LR_NATIVE_REINF_STEP", 3))
         ships_ref = base_ships[0, :, k_ref].to(_torch.float32)
         dyn_mbs = base_ships[0].to(_torch.float32) if _native_dynamic() else None
-        if _native_threat_max():
+        if _native_threat_max() or (_lead_gate() and _lead_ahead()):
+            # Lead-gate (audit point 3): worst-case concentrated threat when ahead, so
+            # the builder leaf defends a lead. Mirrors _native_value (kept in sync).
             atk_reach = _nf_reach_mass(
                 cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
                 H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
@@ -953,6 +1007,11 @@ def _build_native_scorer(obs, me):
             alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5), alloc_eps=_f("LR_ALLOC_EPS", 1.0),
         )
         off_weight = _f("LR_NATIVE_OFFENSE_W", 0.5)
+        if _lead_gate() and _lead_behind():
+            # Lead-gate (audit point 3): when BEHIND, seek variance -- weight the
+            # offensive capture-potential higher so swingy, board-flipping captures
+            # out-score safe consolidation (the comeback line).
+            off_weight *= _f("LR_LEAD_OFFENSE_BOOST", 1.5)
         off_steepness = _f("LR_NATIVE_OFFENSE_STEEPNESS", 5.0)
     def_reach = None
     def_weight = 0.0
@@ -1527,6 +1586,22 @@ def agent(obs, configuration=None):
     comet_ids = frozenset(int(c) for c in (obs_d.get("comet_planet_ids", []) or []))
     comet_paths = _comet_paths_by_id_safe(obs_d) if comet_ids else {}
 
+    # Lead-gated win-equity (audit point 3): measure who is ahead on production NOW,
+    # once per turn, and stash it for the leaf. Production = the win driver (compounds);
+    # ties count as ahead (defend). Reset to None when the gate is off.
+    global _LEAD_STATE
+    if _lead_gate():
+        prod_by_owner = {}
+        for p in planets:
+            o = int(p.owner)
+            if o >= 0:
+                prod_by_owner[o] = prod_by_owner.get(o, 0.0) + float(p.production)
+        my_p = prod_by_owner.get(me, 0.0)
+        opp_p = max((v for o, v in prod_by_owner.items() if o != me), default=0.0)
+        _LEAD_STATE = "ahead" if my_p >= opp_p * (1.0 + _f("LR_LEAD_DEADBAND", 0.0)) else "behind"
+    else:
+        _LEAD_STATE = None
+
     # ---- choose the evaluator (producer-strength orbit_lite, else fast_sim) ----
     use_orbit = _ORBIT_OK and FORCE_EVAL != "fallback"
     orbit = None
@@ -1645,12 +1720,17 @@ def agent(obs, configuration=None):
     hold_margin = _f("LR_HOLD_MARGIN", 0.5)
     # Neutral mass margin (PI 2026-06-21, default 0.0 = OFF => byte-identical).
     # Expansion (neutral) captures are otherwise sized to JUST take the empty planet
-    # -- a small fleet, which by the size->speed law travels slowly and lands thin,
-    # so we crawl into an undefendable spread. With this margin a neutral capture is
-    # sized bigger: faster arrival (less far-dribble) AND surplus garrison to hold
-    # the new planet / stage the next push. Scaled by the planet's value (production)
-    # and travel time so far / valuable neutrals get the most mass.
-    neutral_margin = _f("LR_NEUTRAL_MARGIN", 0.0)
+    # -- a small fleet, which by the size->speed law travels slowly and lands thin, so
+    # we crawl into an undefendable spread. With this margin a CONTESTED neutral is
+    # sized bigger: enough surplus to HOLD it against the strongest enemy force that can
+    # reach it (the `contest` computed per target below) -- safe neutrals (no enemy in
+    # reach) get NO surplus, so expansion stays cheap and fast. (The earlier value*eta
+    # sizing used the slow 20-ship probe eta and over-sized; audit 2026-06-21 finding.)
+    # 2P-ONLY: in 4P (placement / FFA) bigger expansion fleets open windows a third
+    # party punishes and the lever is unvalidated there -> 4P uses LR_NEUTRAL_MARGIN_4P
+    # (default 0) until a 4P seat-rotated A/B.
+    neutral_margin = (_f("LR_NEUTRAL_MARGIN", 0.0) if num_seats < 4
+                      else _f("LR_NEUTRAL_MARGIN_4P", 0.0))
 
     def units_for(launch_triples):
         # launch_triples: list of (src_id, tgt_id, ships, eta)
@@ -1687,8 +1767,9 @@ def agent(obs, configuration=None):
             size = int(math.ceil(defenders)) + 1
             if is_enemy and hold_margin > 0.0:
                 size += int(math.ceil(hold_margin * defenders))   # surplus to hold
-            elif (not is_enemy) and neutral_margin > 0.0:
-                size += int(math.ceil(neutral_margin * (tgt.ships + prod * eta)))  # mass expansion
+            # Neutral mass margin is applied in the DECISIVE path only (it needs the
+            # per-target `contest` to size holdable surplus). The solo/gang path here
+            # is the can't-mass fallback -> keep it minimal.
             shots.append((eta, size, int(src.id), src, angle))
         if not shots:
             continue
@@ -1721,7 +1802,12 @@ def agent(obs, configuration=None):
             if is_enemy and hold_margin > 0.0:
                 dec_size += int(math.ceil(hold_margin * defenders0))
             elif (not is_enemy) and neutral_margin > 0.0:
-                dec_size += int(math.ceil(neutral_margin * (float(tgt.ships) + prod * eta0)))
+                # Mass a CONTESTED neutral to hold it: surplus scaled by the strongest
+                # enemy force that can reach the new planet (`contest`). dec_size already
+                # adds full `contest`; this adds the hold BUFFER on top. Safe neutrals
+                # (contest 0) get no surplus -> cheap, fast expansion. (Replaces the
+                # value*eta sizing that used the slow probe eta and over-sized.)
+                dec_size += int(math.ceil(neutral_margin * contest))
             # Strongest affordable source (most ships) -> big, fast, decisive.
             dec = None
             for (eta, size, sid, src, angle) in sorted(
@@ -1960,7 +2046,13 @@ def agent(obs, configuration=None):
                                   depth, budget_ms=_deep_budget(obs_d))
             return _twoply_pick(obs, configuration, me, num_seats, uniq,
                                 budget_ms=_twoply_budget(obs_d) if anytime_on else None)
-        except Exception:
+        except Exception as _e:
+            # Keep the un-looked-ahead greedy plan (a raise here = idle turn = loss
+            # on the ladder), but make the degrade OBSERVABLE -- otherwise a native-leaf
+            # bug silently ships the weaker move and _native_strict's raise is swallowed
+            # here (audit/2026-06-21-three-lens-review.md, finding S4).
+            print("LR_FALLBACK: pick degraded to producer floor: %r" % (_e,),
+                  file=sys.stderr)
             return committed_emit
 
     return committed_emit
