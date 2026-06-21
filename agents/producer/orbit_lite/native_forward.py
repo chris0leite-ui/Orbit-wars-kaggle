@@ -390,13 +390,21 @@ def hazard_ownership_value(
     # that planet (computed exactly like `atk_reach`, but with our planets as the
     # sources). Intent: HOLDING a massed frontier keeps this potential (patience),
     # dribbling ships into far neutrals destroys it (anti-scatter), a concentrated
-    # capture realizes it (decisive action). REFUTED IN REPLAYS (kept default-OFF):
-    # because the term sums over ALL reachable targets, "sit still and threaten
-    # everything" out-scores "commit and take one", biasing toward passivity -- at
-    # off_weight 0.5 it lost every test seed (2P 7/106499442 and 4P 1912745358 went
-    # win->loss) while reducing scatter; lower weights were erratic. A correct
-    # version would need a COMPETITIVE (commit-attributed) potential, not this
-    # additive one. OFF (off_reach None or off_weight 0) => block skipped entirely.
+    # capture realizes it (decisive action).
+    #
+    # STATUS (corrected 2026-06-21): this term was refuted *standalone* on the plain
+    # native leaf (off_weight 0.5 lost the early test seeds while reducing scatter,
+    # because summing over ALL reachable targets lets "sit still and threaten
+    # everything" out-score "commit and take one" -> passivity). BUT it is now
+    # SHIPPED ON (LR_NATIVE_OFFENSE=1) layered on the concentrate+reinforce stack
+    # (commit dca1504d): the concentration generator supplies decisive committing
+    # candidates, so the additive potential reweights toward "mass for a real
+    # capture" instead of biasing to passivity. That stack is sub 53906150 (live
+    # mu ~1154.5, the best to date). The known remaining weakness is NOT scatter --
+    # it is blowing a built production lead (lead-then-collapse); see
+    # knowledge-base/thoughts/2026-06-21-lead-then-collapse-vs-v2.md. A still-better
+    # version would be a COMPETITIVE (commit-attributed) potential, not this additive
+    # one. OFF (off_reach None or off_weight 0) => block skipped entirely.
     off_gain = None
     if off_reach is not None and off_weight != 0.0:
         off = off_reach.view(1, P, H1).to(fdtype)
