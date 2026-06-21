@@ -258,6 +258,30 @@ def _native_threat_max():
         "1", "true", "on", "yes")
 
 
+def _garrison_floor():
+    """Default-OFF gate (PI 2026-06-21, 'hold only under threat'). A planet that
+    a single enemy can clearly hit reserves enough garrison to win that fight and
+    may only spend its SURPLUS on attacks; an unthreatened planet drains freely
+    (reserve 0, byte-identical). This is enforced in plan GENERATION -- it caps
+    each source's spendable ships BEFORE candidates are built -- so the plan menu
+    naturally contains 'attack elsewhere, hold the threatened planet', the option
+    the 2-ply chooser is otherwise never offered. Read at call time.
+
+    Observed failure (PI replay, 2026-06-21): we launch FIRST, draining a large
+    planet at a small/far target, then lose it to the opponent's obvious attack.
+    The drain is committed by the greedy plan-builder (the producer net-ship-delta
+    scorer, which has no hold/threat concept), so the leaf-level threat fix cannot
+    undo it. The floor stops the drain at the source.
+
+    Threat = the worst-case SINGLE attacker (no group-ups, per the PI): the larger
+    of (a) the strongest enemy PLANET that can reach it within the window, sized at
+    its ships + production accrued by arrival, and (b) the strongest enemy FLEET
+    already in flight and CLOSING on it (the in-flight attack the leaf's threat
+    model is blind to)."""
+    return os.environ.get("LR_GARRISON_FLOOR", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _wallclock_ms():
     """Per-turn budget, read at CALL time. The bundle parity gate sets
     ORBIT_WARS_PARITY_WALLCLOCK_MS huge so the greedy loop never bails
@@ -1387,6 +1411,42 @@ def agent(obs, configuration=None):
 
     available = {int(p.id): int(p.ships) for p in my_planets}
     by_id = {int(p.id): p for p in planets}
+
+    # Garrison floor (default OFF): a planet a single enemy can clearly hit keeps
+    # enough garrison to win that fight and may spend only its SURPLUS; unthreatened
+    # planets are untouched (drain freely). Caps `available` BEFORE candidates are
+    # built, so the menu gains 'attack elsewhere, hold the threatened planet'.
+    if _garrison_floor():
+        window = _f("LR_FLOOR_WINDOW", 18.0)        # steps of look-ahead for "can reach"
+        enemy_planets = [p for p in planets if int(p.owner) != me and int(p.owner) != -1]
+        enemy_fleets = [f for f in fleets if int(f.owner) != me and int(f.owner) != -1]
+        for mp in my_planets:
+            mid = int(mp.id)
+            mxy = (float(mp.x), float(mp.y))
+            threat = 0.0
+            # (a) strongest enemy PLANET that can reach within the window:
+            #     ships + production accrued by arrival (the "count ships+prod" view).
+            for q in enemy_planets:
+                eta = dist(mxy, (float(q.x), float(q.y))) / max(1e-6, fleet_speed(float(q.ships)))
+                if eta <= window:
+                    threat = max(threat, float(q.ships) + float(q.production) * eta)
+            # (b) strongest enemy FLEET already in flight and CLOSING on this planet
+            #     (the in-flight attack the leaf threat model misses).
+            for f in enemy_fleets:
+                fxy = (float(f.x), float(f.y))
+                eta = dist(mxy, fxy) / max(1e-6, fleet_speed(float(f.ships)))
+                if eta > window:
+                    continue
+                # closing = fleet heading points within 90 deg of the planet.
+                closing = (math.cos(float(f.angle)) * (mxy[0] - fxy[0])
+                           + math.sin(float(f.angle)) * (mxy[1] - fxy[1])) > 0.0
+                if closing:
+                    threat = max(threat, float(f.ships))
+            if threat <= 0.0:
+                continue                              # not under threat -> no reserve
+            reserve = min(int(mp.ships), int(math.ceil(threat)))
+            available[mid] = max(0, int(mp.ships) - reserve)
+
     # each candidate: emit=[[src_id,angle,ships],...], units=[(src_slot,tgt_slot,ships,eta),...],
     #                 srcs={src_id:ships}, rank, front
     candidates = []
