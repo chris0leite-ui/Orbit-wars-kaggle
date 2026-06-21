@@ -282,6 +282,27 @@ def _garrison_floor():
         "1", "true", "on", "yes")
 
 
+def _native_builder():
+    """Default-OFF gate (PI 2026-06-21). When ON, the greedy plan-builder scores
+    candidate launches with the native flip-hazard leaf (== the 2-ply chooser leaf
+    _native_value) instead of the producer net-ship-delta scorer, so far thin grabs
+    and exposed-planet drains are never BUILT in the first place.
+
+    Observed failure (PI replays): the bad target-selection (drain a large planet at
+    a far/low-value target) is committed by the greedy builder, which scores with the
+    producer net-ship-delta scorer -- no flip-hazard, no 'does this capture hold?',
+    no 'is this planet threatened?'. The 2-ply chooser uses the good leaf but only
+    trims whole-plan prefixes, so it cannot repair a bad plan. Scoring the BUILDER
+    with the same flip-hazard value fixes target selection at the source.
+
+    OFF = byte-identical producer-scorer path. Most effective with LR_VALUE_COMMIT /
+    LR_CONCENTRATE on (so the ordering pass uses the native leaf too) and the full
+    chooser config (LR_NATIVE_LEAF/REINFORCE/OFFENSE) so builder leaf == chooser
+    leaf. Read at call time."""
+    return os.environ.get("LR_NATIVE_BUILDER", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _wallclock_ms():
     """Per-turn budget, read at CALL time. The bundle parity gate sets
     ORBIT_WARS_PARITY_WALLCLOCK_MS huge so the greedy loop never bails
@@ -298,6 +319,11 @@ def _wallclock_ms():
 PROJECT_HORIZON_2P = _i("LR_HORIZON_2P", 18)   # orbit_lite garrison-flow window (2P)
 PROJECT_HORIZON_4P = _i("LR_HORIZON_4P", 13)   # 4P
 ROI_FLOOR = _f("LR_ROI_FLOOR", 1.5)            # min projected net-ship gain to commit (producer's value)
+# Accept floor for the native-leaf builder (LR_NATIVE_BUILDER). The native marginal
+# is a discounted-mean ship-margin (smaller scale than the producer delta) and already
+# prices flip-hazard, so a non-holding grab comes back <= 0. Default 0.0 = accept any
+# strictly-positive improvement, reject far/exposed grabs. Reusing 1.5 would idle it.
+NATIVE_BUILDER_FLOOR = _f("LR_NATIVE_BUILDER_FLOOR", 0.0)
 MAX_CANDIDATES = _i("LR_MAX_CANDIDATES", 28)
 FRONTIER_REF_SHIPS = _f("LR_FRONTIER_REF_SHIPS", 30.0)
 RANK_HINT_SHIPS = 20
@@ -847,6 +873,141 @@ def _native_value(obs_any, me):
     return float(val.reshape(-1)[0])
 
 
+def _build_native_scorer(obs, me):
+    """Return (score_units_fn, id2slot) or raise -- the BUILDER counterpart of
+    _build_orbit_scorer (main.py), but scoring launch-sets with the native
+    flip-hazard leaf (== the 2-ply chooser leaf _native_value) instead of the
+    producer net-ship-delta scorer (PI 2026-06-21, LR_NATIVE_BUILDER).
+
+    The expensive movement/threat tensors (movement build, garrison status, distance
+    cache, the do-nothing trajectory, and the atk/off/def reach tensors -- all of
+    which depend on the current board's do-nothing projection, NOT on the candidate)
+    are built ONCE here; the returned closure does only the per-candidate trajectory
+    recurrence + hazard value. Score is MARGINAL over do-nothing (empty -> 0.0), so
+    it slots into the greedy's `v > current + floor` accept test exactly like the
+    producer scorer. Mirrors _native_value's blocks verbatim (duplicated rather than
+    refactored, to keep the shipped chooser path byte-identical)."""
+    ot = _single_obs_to_tensor(obs, player_id=int(me))
+    pc = int(_largest_initial_player_count(ot))
+    H = _i("LR_NATIVE_HORIZON", PROJECT_HORIZON_4P if pc >= 4 else PROJECT_HORIZON_2P)
+    cfg = _MovementConfig(
+        movement_horizon=int(H), drift_epsilon=1e-3, track_fleets=True,
+        player_count=pc, max_tracked_fleets=128,
+    )
+    mv = _ensure_planet_movement(obs_tensors=ot, expected_cfg=cfg, cached_movement=None)
+    status = mv.garrison_status(max_horizon=int(H))
+    prod = mv.planet_prod.to(_torch.float32).reshape(-1)
+    alive_by_step = mv.alive_by_step[: int(H) + 1]
+    cache = _build_distance_cache(mv, max_k=int(H))
+    owner0 = status.owner[:, 0].to(_torch.long)
+    ships0 = status.ships[:, 0].to(_torch.float32)
+    is_enemy = (owner0 != int(me)) & (owner0 >= 0)
+    background = status.arrivals_by_owner[..., 1:, :]
+    ids = ot["planets"][:, 0].long().tolist()
+    id2slot = {int(v): i for i, v in enumerate(ids)}
+
+    # Do-nothing trajectory + reach tensors -- identical to _native_value, computed once.
+    empty_l = _torch.full((1, 1), -1, dtype=_torch.long)
+    base_owner, base_ships, base_arr = _nf_build_traj(
+        init_owner=owner0, init_ships=ships0, prod=prod, alive_by_step=alive_by_step,
+        background_arrivals=background, src=empty_l, tgt=empty_l,
+        ships=_torch.zeros(1, 1), eta=_torch.ones(1, 1),
+        owner=_torch.zeros(1, 1, dtype=_torch.long),
+        valid=_torch.zeros(1, 1, dtype=_torch.bool),
+    )
+    if _native_allocate() or _native_reinforce():
+        k_ref = min(int(H), _i("LR_NATIVE_REINF_STEP", 3))
+        ships_ref = base_ships[0, :, k_ref].to(_torch.float32)
+        dyn_mbs = base_ships[0].to(_torch.float32) if _native_dynamic() else None
+        if _native_threat_max():
+            atk_reach = _nf_reach_mass(
+                cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
+                H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
+                aggregate="max", mass_by_step=dyn_mbs,
+            )
+        else:
+            atk_reach = _nf_reach_mass(
+                cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_enemy,
+                H=int(H), prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
+                aggregate="allocate", our_garrison=ships_ref,
+                alloc_w_prox=_f("LR_ALLOC_W_PROX", 1.0),
+                alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
+                alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5),
+                alloc_eps=_f("LR_ALLOC_EPS", 1.0), mass_by_step=dyn_mbs,
+            )
+    else:
+        ships_ref = ships0
+        dyn_mbs = None
+        atk_reach = _nf_reach_mass(
+            cross_dist=cache.cross_dist, ships=ships0, is_enemy=is_enemy, H=int(H),
+            prod=prod, growth_alpha=_f("LR_NATIVE_THREAT_GROWTH", 0.0),
+        )
+    off_reach = None
+    off_weight = 0.0
+    off_steepness = 5.0
+    if _native_offense():
+        k_off = min(int(H), _i("LR_NATIVE_OFFENSE_STEP", 3))
+        ships_off = base_ships[0, :, k_off].to(_torch.float32)
+        is_mine_t = (owner0 == int(me))
+        off_reach = _nf_reach_mass(
+            cross_dist=cache.cross_dist, ships=ships_off, is_enemy=is_mine_t,
+            H=int(H), prod=prod, aggregate="allocate", our_garrison=ships_off,
+            alloc_w_prox=_f("LR_ALLOC_W_PROX", 1.0),
+            alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
+            alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5), alloc_eps=_f("LR_ALLOC_EPS", 1.0),
+        )
+        off_weight = _f("LR_NATIVE_OFFENSE_W", 0.5)
+        off_steepness = _f("LR_NATIVE_OFFENSE_STEEPNESS", 5.0)
+    def_reach = None
+    def_weight = 0.0
+    if _native_reinforce():
+        is_mine_d = (owner0 == int(me))
+        def_reach = _nf_reach_mass(
+            cross_dist=cache.cross_dist, ships=ships_ref, is_enemy=is_mine_d,
+            H=int(H), prod=prod, aggregate="allocate", our_garrison=ships_ref,
+            alloc_w_prox=_f("LR_ALLOC_W_PROX", 1.0),
+            alloc_w_val=_f("LR_ALLOC_W_VAL", 1.0),
+            alloc_w_def=_f("LR_ALLOC_W_DEF", 0.5), alloc_eps=_f("LR_ALLOC_EPS", 1.0),
+            target_mask=is_mine_d, exclude_self=True, mass_by_step=dyn_mbs,
+        )
+        def_weight = _f("LR_NATIVE_DEF_W", 1.0)
+
+    steep = _f("LR_NATIVE_STEEPNESS", 5.0)
+    disc = _f("LR_NATIVE_DISCOUNT", 1.0)
+    term = _f("LR_NATIVE_TERMINAL", 12.0)
+
+    def _hazard(owner_traj, ships_traj, arr):
+        return _nf_hazard_value(
+            owner=owner_traj, ships=ships_traj, prod=prod, atk_reach=atk_reach,
+            me=int(me), steepness=steep, discount=disc, value_mode="ships",
+            inflight=_nf_inflight(arr), terminal=term,
+            off_reach=off_reach, off_weight=off_weight, off_steepness=off_steepness,
+            def_reach=def_reach, def_weight=def_weight,
+        )
+
+    base_val = float(_hazard(base_owner, base_ships, base_arr).reshape(-1)[0])
+
+    def score_native_units(units):
+        if not units:
+            return 0.0
+        L = len(units)
+        src = _torch.tensor([[int(u[0]) for u in units]], dtype=_torch.long)
+        tgt = _torch.tensor([[int(u[1]) for u in units]], dtype=_torch.long)
+        sh = _torch.tensor([[float(u[2]) for u in units]])
+        et = _torch.tensor([[float(max(1, int(u[3]))) for u in units]])
+        ow = _torch.full((1, L), int(me), dtype=_torch.long)   # arriving fleets are ours
+        va = _torch.ones((1, L), dtype=_torch.bool)
+        owner_traj, ships_traj, arr = _nf_build_traj(
+            init_owner=owner0, init_ships=ships0, prod=prod,
+            alive_by_step=alive_by_step, background_arrivals=background,
+            src=src, tgt=tgt, ships=sh, eta=et, owner=ow, valid=va,
+        )
+        v = float(_hazard(owner_traj, ships_traj, arr).reshape(-1)[0])
+        return v - base_val            # MARGINAL over do-nothing (empty -> 0)
+
+    return score_native_units, id2slot
+
+
 def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=None,
                  opp_move_fn=None):
     """Pick the candidate full-plan with the best 2-ply value: apply [my plan,
@@ -1382,6 +1543,18 @@ def agent(obs, configuration=None):
         return []                       # explicit orbit-only request but unavailable
     score_units, id2slot = (orbit if orbit is not None else (None, None))
 
+    # Plan-builder scorer (default OFF): score candidate launches with the native
+    # flip-hazard leaf (== the 2-ply chooser) instead of the producer net-ship-delta
+    # scorer, so far thin grabs / exposed-planet drains are never built. Rebind
+    # score_units only; id2slot is derived identically so units_for stays valid.
+    if _native_builder() and orbit is not None:
+        try:
+            _nat = _build_native_scorer(obs, me)
+        except Exception:
+            _nat = None
+        if _nat is not None:
+            score_units = _nat[0]
+
     # Fallback fast_sim scorer (used only when orbit_lite is unavailable).
     fb_snap = None
     if orbit is None:
@@ -1664,7 +1837,9 @@ def agent(obs, configuration=None):
     avail = dict(available)
     if orbit is not None:
         current = 0.0                       # score of the empty plan
-        floor = ROI_FLOOR
+        # Native builder marginal is a different (smaller) scale than the producer
+        # delta, so it needs its own floor (0.0 = accept any positive improvement).
+        floor = NATIVE_BUILDER_FLOOR if _native_builder() else ROI_FLOOR
     else:
         current = value_fallback([])
         floor = 0.5
