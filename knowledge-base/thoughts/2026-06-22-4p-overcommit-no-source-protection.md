@@ -66,3 +66,21 @@ production accrued + reinforcement that ARRIVES IN TIME); donors lend their surp
 their OWN imminent threat (so we concentrate to save the attacked planet but don't strip a
 donor that is itself about to be hit) -- bypassing the attack-reserve cap, because saving a
 real planet outranks the speculative reserve. 2P path byte-identical.
+
+## PI follow-up #2 — "senseless attacks: new corner before winning current contests"
+
+After reserve + coord-defense + hold-aware builder, PI (watching the builder 4P replay,
+steps 37 & 59): "looks better, but still many senseless attacks — going for a NEW corner
+when the corners we are fighting for are not won yet." I.e. a TEMPORAL target-concentration
+failure: we open new offensive fronts while existing contested captures (in-flight fleets
+to not-yet-ours planets) are unresolved -> force spread across fronts -> none stick.
+
+Cause: the per-turn proposer picks the best targets fresh each turn with NO memory of our
+own in-flight commitments; the hold-aware builder scores each launch's holdability in
+isolation, so it doesn't see we're already over-committed across multiple fronts. Concentrate
+sizes individual captures but doesn't cap the NUMBER of simultaneous fronts.
+
+Candidate fix (next): a "finish what you started / front cap" -- prefer reinforcing or
+completing a target we already have a fleet en route to (a live contest) over opening a new
+one; cap concurrent distinct attack targets per turn. Validate the reserve+builder PACKAGE
+win-rate FIRST (measurement running) before stacking another mechanism.
