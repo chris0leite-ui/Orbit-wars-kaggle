@@ -84,3 +84,19 @@ Candidate fix (next): a "finish what you started / front cap" -- prefer reinforc
 completing a target we already have a fleet en route to (a live contest) over opening a new
 one; cap concurrent distinct attack targets per turn. Validate the reserve+builder PACKAGE
 win-rate FIRST (measurement running) before stacking another mechanism.
+
+## PI follow-up #3 — "win the frontier where it is, don't extend it"
+
+Even with the front cap, PI: "still attacks into NEW territory instead of focusing on our
+frontier. We EXTEND the frontier instead of WINNING the frontier where it is now." I.e.
+the front cap limits the NUMBER of new fronts but doesn't bias target SELECTION toward the
+contested frontier -- we still spend force extending outward (new/far territory) rather
+than massing to WIN the contested boundary planets we're already engaged at.
+
+Candidate refinement (gated, pending the package win-rate gate): rank/prioritize FRONTIER
+targets (enemy/neutral planets adjacent to our holdings / where we already contest) above
+far new-territory targets, and mass to win them before extending. Possibly lower
+LR_MAX_FRONTS to 1 in 4P for stricter focus. Decision deferred to the measurement result:
+if the full package (reserve+defense+builder+frontcap) does not beat default win-rate at
+n>=12, stop stacking behavioral tweaks (4P outcome looks largely map-determined) and
+reconsider; if it does, add frontier-focus and re-measure.
