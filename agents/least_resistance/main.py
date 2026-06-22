@@ -346,6 +346,20 @@ def _reserve_4p():
     return _cfg("LR_RESERVE_4P").strip().lower() in ("1", "true", "on", "yes")
 
 
+def _reserve_2p():
+    """Default-OFF gate (PI 2026-06-22). Apply the SAME focus package (per-source
+    reserve + coordinated/timed defense + front cap) in 2P/3P too. In 2P the coalition
+    sum has no 'others', so the reserve degrades to a single-enemy reserve. 2P is our
+    strong format -- this is A/B-gated, not shipped, until it's shown not to regress."""
+    return _cfg("LR_RESERVE_2P").strip().lower() in ("1", "true", "on", "yes")
+
+
+def _pkg_on(num_seats):
+    """Is the focus package (reserve + coordinated/timed defense + front cap) active?
+    4P via LR_RESERVE_4P; 2P/3P via LR_RESERVE_2P. Read at call time."""
+    return _reserve_4p() if num_seats >= 4 else _reserve_2p()
+
+
 def _infer_inflight_fronts(fleets, planets, me):
     """Distinct NON-our planet ids that our in-flight fleets are already heading toward
     (a fleet's target ~ the nearest non-our planet ahead, within a ~20 deg cone of its
@@ -1723,7 +1737,7 @@ def agent(obs, configuration=None):
     #     fix so a planet near several rivals reserves against the whole field, protecting
     #     both attack sources and reinforcement donors (PI 2026-06-22). 2P never enters it.
     _floor_on = _garrison_floor()
-    _res4p_on = _reserve_4p() and num_seats >= 4
+    _res4p_on = _pkg_on(num_seats)
     if _floor_on or _res4p_on:
         window = _f("LR_FLOOR_WINDOW", 18.0)        # steps of look-ahead for "can reach"
         w_coal = _f("LR_RESERVE_COALITION_W", 0.5) if _res4p_on else 0.0
@@ -1964,7 +1978,7 @@ def agent(obs, configuration=None):
         # and only send reinforcement that ARRIVES IN TIME -- so neighbours concentrate to
         # save the attacked planet instead of sending fleets that land after it flips. 2P /
         # non-reserve path is byte-identical (legacy threat=sum-in-range, no timing).
-        coord = _reserve_4p() and num_seats >= 4
+        coord = _pkg_on(num_seats)
         time_buf = _f("LR_DEFEND_TIME_BUF", 1.0)
         enemy_fleets = [f for f in fleets
                         if int(f.owner) != me and int(f.owner) != -1]
@@ -2073,7 +2087,7 @@ def agent(obs, configuration=None):
     # fleets already head to (active fronts); allow at most LR_MAX_FRONTS NEW attack
     # fronts this turn so force concentrates on winning current contests instead of
     # dribbling to fresh corners. Defense and reinforcing an existing front are exempt.
-    _front_cap_on = _reserve_4p() and num_seats >= 4
+    _front_cap_on = _pkg_on(num_seats)
     _open_fronts = _infer_inflight_fronts(fleets, planets, me) if _front_cap_on else set()
     _new_front_budget = max(0, _i("LR_MAX_FRONTS", 2) - len(_open_fronts)) if _front_cap_on else 0
 
