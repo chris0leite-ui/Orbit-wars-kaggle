@@ -335,6 +335,17 @@ def _garrison_floor():
         "1", "true", "on", "yes")
 
 
+def _reserve_4p():
+    """Default-OFF gate (PI 2026-06-22). 4P-only coalition-aware per-source garrison
+    reserve: each planet keeps enough garrison to survive the COMBINED reachable enemy
+    field (strongest + w * the rest), so it can be drained neither for a premature
+    attack that a THIRD rival punishes, nor as an over-lent reinforcement donor (the two
+    4P failure modes the PI watched). Reuses the garrison-floor cap on `available`;
+    distinct from `LR_GARRISON_FLOOR` (which is single-enemy and format-agnostic). 2P is
+    untouched. Read at call time."""
+    return _cfg("LR_RESERVE_4P").strip().lower() in ("1", "true", "on", "yes")
+
+
 def _native_builder():
     """Default-OFF gate (PI 2026-06-21). When ON, the greedy plan-builder scores
     candidate launches with the native flip-hazard leaf (== the 2-ply chooser leaf
@@ -1673,50 +1684,65 @@ def agent(obs, configuration=None):
     available = {int(p.id): int(p.ships) for p in my_planets}
     by_id = {int(p.id): p for p in planets}
 
-    # Garrison floor (default OFF): a planet a single enemy can clearly hit keeps
-    # enough garrison to win that fight and may spend only its SURPLUS; unthreatened
-    # planets are untouched (drain freely). Caps `available` BEFORE candidates are
-    # built, so the menu gains 'attack elsewhere, hold the threatened planet'.
-    if _garrison_floor():
+    # Per-source garrison reserve (default OFF): a planet that the reachable enemy field
+    # can hit keeps enough garrison to survive and may spend only its SURPLUS; unthreatened
+    # planets drain freely. Caps `available` BEFORE candidates are built, so the menu gains
+    # 'attack/reinforce elsewhere, hold the threatened planet'. Two gates:
+    #   LR_GARRISON_FLOOR  -- single strongest enemy (the 2026-06-21 form, format-agnostic).
+    #   LR_RESERVE_4P (num_seats>=4) -- COALITION-aware (strongest + w * the rest): the FFA
+    #     fix so a planet near several rivals reserves against the whole field, protecting
+    #     both attack sources and reinforcement donors (PI 2026-06-22). 2P never enters it.
+    _floor_on = _garrison_floor()
+    _res4p_on = _reserve_4p() and num_seats >= 4
+    if _floor_on or _res4p_on:
         window = _f("LR_FLOOR_WINDOW", 18.0)        # steps of look-ahead for "can reach"
+        w_coal = _f("LR_RESERVE_COALITION_W", 0.5) if _res4p_on else 0.0
         enemy_planets = [p for p in planets if int(p.owner) != me and int(p.owner) != -1]
         enemy_fleets = [f for f in fleets if int(f.owner) != me and int(f.owner) != -1]
+
+        def _coalition_threat(pxy):
+            """(threat, eta_of_strongest) reachable onto pxy within the window. Threat =
+            strongest reachable enemy + w_coal * (sum of the OTHER reachable enemies). With
+            w_coal=0 this is the single-strongest garrison-floor behaviour."""
+            strengths = []   # (strength, eta)
+            for q in enemy_planets:
+                eta = dist(pxy, (float(q.x), float(q.y))) / max(1e-6, fleet_speed(float(q.ships)))
+                if eta <= window:
+                    strengths.append((float(q.ships) + float(q.production) * eta, eta))
+            for f in enemy_fleets:
+                fxy = (float(f.x), float(f.y))
+                eta = dist(pxy, fxy) / max(1e-6, fleet_speed(float(f.ships)))
+                if eta > window:
+                    continue
+                closing = (math.cos(float(f.angle)) * (pxy[0] - fxy[0])
+                           + math.sin(float(f.angle)) * (pxy[1] - fxy[1])) > 0.0
+                if closing:
+                    strengths.append((float(f.ships), eta))
+            if not strengths:
+                return 0.0, window
+            strengths.sort(key=lambda s: -s[0])
+            strongest, eta_s = strengths[0]
+            extra = w_coal * sum(s for s, _ in strengths[1:])
+            return strongest + extra, eta_s
+
+        # One pass: each planet's coalition threat (also used to bound donor surplus).
+        my_threat = {int(mp.id): _coalition_threat((float(mp.x), float(mp.y))) for mp in my_planets}
         for mp in my_planets:
             mid = int(mp.id)
             mxy = (float(mp.x), float(mp.y))
-            threat = 0.0
-            eta_threat = window
-            # (a) strongest enemy PLANET that can reach within the window:
-            #     ships + production accrued by arrival (the "count ships+prod" view).
-            for q in enemy_planets:
-                eta = dist(mxy, (float(q.x), float(q.y))) / max(1e-6, fleet_speed(float(q.ships)))
-                if eta <= window:
-                    t = float(q.ships) + float(q.production) * eta
-                    if t > threat:
-                        threat, eta_threat = t, eta
-            # (b) strongest enemy FLEET already in flight and CLOSING on this planet
-            #     (the in-flight attack the leaf threat model misses).
-            for f in enemy_fleets:
-                fxy = (float(f.x), float(f.y))
-                eta = dist(mxy, fxy) / max(1e-6, fleet_speed(float(f.ships)))
-                if eta > window:
-                    continue
-                closing = (math.cos(float(f.angle)) * (mxy[0] - fxy[0])
-                           + math.sin(float(f.angle)) * (mxy[1] - fxy[1])) > 0.0
-                if closing and float(f.ships) > threat:
-                    threat, eta_threat = float(f.ships), eta
+            threat, eta_threat = my_threat[mid]
             if threat <= 0.0:
                 continue                              # not under threat -> no reserve
-            # Net of REINFORCEMENT: our OTHER planets that can route ships here BEFORE
-            # the threat lands share the defense, so an isolated planet reserves the
-            # most and a well-supported one barely reserves (frees surplus to expand).
-            # A single distant enemy is thus no longer a full threat to every planet.
+            # Net of REINFORCEMENT, but only each donor's SURPLUS (its ships beyond its OWN
+            # coalition threat) can be lent -- a big planet that is itself threatened can't
+            # bail others out, which is exactly the uncoordinated-drain bug (PI 2026-06-22).
             support = 0.0
             for o in my_planets:
-                if int(o.id) == mid:
+                oid = int(o.id)
+                if oid == mid:
                     continue
                 if dist(mxy, (float(o.x), float(o.y))) / max(1e-6, fleet_speed(float(o.ships))) <= eta_threat:
-                    support += float(o.ships)
+                    support += max(0.0, float(o.ships) - my_threat[oid][0])
             need = threat - _f("LR_FLOOR_SUPPORT_W", 1.0) * support
             if need <= 0.0:
                 continue                              # reinforcement covers it -> no reserve
