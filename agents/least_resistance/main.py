@@ -63,6 +63,14 @@ os.environ.setdefault("LR_NATIVE_LEAF", "1")
 os.environ.setdefault("LR_NATIVE_REINFORCE", "1")
 os.environ.setdefault("LR_CONCENTRATE", "1")   # additive: decisive captures + value-ordered commit
 os.environ.setdefault("LR_NATIVE_OFFENSE", "1")  # credit massing/holding; far dribble grabs score negative
+# Converged stack (PI override 2026-06-21): native flip-hazard plan-BUILDER (so
+# target selection is hold-aware) + defensible TEAM-UP captures + neutral mass
+# margin (bigger/faster expansion that lands defendable). THREAT_MAX/DYNAMIC/
+# FRONTIER stay OFF (refuted). Submitted without the n>=32 A/B (run died in a
+# restart; clean panel showed ~parity) at explicit PI direction.
+os.environ.setdefault("LR_NATIVE_BUILDER", "1")
+os.environ.setdefault("LR_TEAMUP", "1")
+os.environ.setdefault("LR_NEUTRAL_MARGIN", "0.25")
 # (LR_SKIP_COMETS already defaults to 1.)
 # --------------------------------------------------------------------------
 
