@@ -1929,15 +1929,46 @@ def agent(obs, configuration=None):
     if (os.environ.get("LR_DEFEND", "1").strip().lower() in ("1", "true", "on", "yes")
             and my_planets):
         defend_range = _f("LR_DEFEND_RANGE", 35.0)
+        # 4P coordinated + TIMED defense (PI 2026-06-22): with the reserve on, size the
+        # defense to win AT the attacker's arrival (garrison + production accrued by then)
+        # and only send reinforcement that ARRIVES IN TIME -- so neighbours concentrate to
+        # save the attacked planet instead of sending fleets that land after it flips. 2P /
+        # non-reserve path is byte-identical (legacy threat=sum-in-range, no timing).
+        coord = _reserve_4p() and num_seats >= 4
+        time_buf = _f("LR_DEFEND_TIME_BUF", 1.0)
         enemy_fleets = [f for f in fleets
                         if int(f.owner) != me and int(f.owner) != -1]
+
+        def _inbound(pxy):
+            """(mass, earliest_eta) of enemy fleets within defend_range of pxy."""
+            m = 0.0
+            e = float("inf")
+            for f in enemy_fleets:
+                dd = dist(pxy, (float(f.x), float(f.y)))
+                if dd <= defend_range:
+                    m += float(f.ships)
+                    e = min(e, dd / max(1e-6, fleet_speed(float(f.ships))))
+            return m, e
+
         for mine in my_planets:
             mxy = (float(mine.x), float(mine.y))
-            threat = sum(float(f.ships) for f in enemy_fleets
-                         if dist(mxy, (float(f.x), float(f.y))) <= defend_range)
-            if threat <= float(mine.ships):
-                continue                                  # not under real threat
-            deficit = int(math.ceil(threat - float(mine.ships))) + 1
+            if coord:
+                atk_mass, atk_eta = _inbound(mxy)
+                if atk_mass <= 0.0:
+                    continue
+                # defense available at the moment the attack lands.
+                defense = float(mine.ships) + float(mine.production) * (
+                    atk_eta if atk_eta < float("inf") else 0.0)
+                if atk_mass <= defense:
+                    continue                              # holds on its own
+                deficit = int(math.ceil(atk_mass - defense)) + 1
+            else:
+                threat = sum(float(f.ships) for f in enemy_fleets
+                             if dist(mxy, (float(f.x), float(f.y))) <= defend_range)
+                if threat <= float(mine.ships):
+                    continue                              # not under real threat
+                deficit = int(math.ceil(threat - float(mine.ships))) + 1
+                atk_eta = float("inf")
             donors = sorted((p for p in my_planets if int(p.id) != int(mine.id)),
                             key=lambda p: dist(mxy, (float(p.x), float(p.y))))
             d_emit, d_triples, d_srcs, acc = [], [], {}, 0
@@ -1951,6 +1982,8 @@ def agent(obs, configuration=None):
                 a2, eta2, arr = shot
                 if not _sun_clear(d, arr):
                     continue
+                if coord and atk_eta < float("inf") and eta2 > atk_eta + time_buf:
+                    continue                              # arrives too late to help -> skip
                 d_emit.append([int(d.id), float(a2), take])
                 d_triples.append((int(d.id), int(mine.id), take, eta2))
                 d_srcs[int(d.id)] = take

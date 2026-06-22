@@ -42,3 +42,27 @@ applied before candidate generation (caps `available`). Threat = strongest reach
 protects both attack sources and reinforcement donors (both spend from `available`). 2P is
 untouched (it wins at 71%). Calibrated `w` to avoid the 2026-06-19 Goldilocks paralysis.
 Verify by rendering the three PI seeds in 4P before/after + a 4P winrate sanity check.
+
+## PI follow-up (same session) — reserve looks good, defense coordination is the gap
+
+PI watched the reserve-ON 4P replay (seed 219030400): "looks good, only our defense is
+not good enough. at the bottom we seem not to be coordinated well enough to survive red's
+attack." So the reserve fixed the holding/over-extension (validated by eye), but DEFENSE
+COORDINATION is the remaining 4P weakness.
+
+Diagnosis of LR_DEFEND (main.py ~1929-1966):
+- Donor draw uses the RESERVE-CAPPED `available` -> with LR_RESERVE_4P on, neighbours
+  hoard their reserve and won't concentrate to save the attacked planet (the reserve, a
+  per-planet hoard, is the OPPOSITE of coordinated defense).
+- NO timing: it sends `take` from nearest donors without checking the reinforcement
+  ARRIVES before the attack lands -> fleets arrive late, the planet flips anyway
+  ("uncoordinated fleet sending").
+- threat = sum of enemy FLEETS within a fixed 35u range -> ignores arrival time and
+  enemy planets that can launch.
+
+Fix (this session): a 4P coordinated + TIMED defense (gated with LR_RESERVE_4P). For a
+planet under imminent attack: size defense to win AT the attacker's arrival (garrison +
+production accrued + reinforcement that ARRIVES IN TIME); donors lend their surplus over
+their OWN imminent threat (so we concentrate to save the attacked planet but don't strip a
+donor that is itself about to be hit) -- bypassing the attack-reserve cap, because saving a
+real planet outranks the speculative reserve. 2P path byte-identical.
