@@ -1747,6 +1747,14 @@ def agent(obs, configuration=None):
             if need <= 0.0:
                 continue                              # reinforcement covers it -> no reserve
             reserve = min(int(mp.ships), int(math.ceil(need)))
+            if _res4p_on:
+                # Anti-paralysis cap (PI 2026-06-22): in a dense 4P field EVERY planet is
+                # "threatened" so the surplus-support collapses and every planet would
+                # hoard its full garrison -> the agent freezes (observed: 9 launches/187
+                # turns). Always leave at least (1-max_frac) of the garrison spendable so
+                # the agent can still expand/press; the reserve only ever holds back a
+                # bounded fraction.
+                reserve = min(reserve, int(_f("LR_RESERVE_MAX_FRAC", 0.5) * float(mp.ships)))
             available[mid] = max(0, int(mp.ships) - reserve)
 
     # each candidate: emit=[[src_id,angle,ships],...], units=[(src_slot,tgt_slot,ships,eta),...],
