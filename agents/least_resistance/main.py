@@ -67,6 +67,10 @@ _SHIP_DEFAULTS = {
     "LR_CONCENTRATE": "1",      # additive: decisive captures + value-ordered commit
     "LR_NATIVE_OFFENSE": "1",   # credit massing/holding; far dribble grabs score negative
     "LR_NEUTRAL_MARGIN": "0.25",  # mass expansion fleets: faster arrival + land defendable
+    "LR_RESERVE_4P": "1",         # 4P-ONLY focus package: coalition reserve + coordinated/
+                                  # timed defense + front cap + hold-aware builder. 2P stays
+                                  # untouched (LR_RESERVE_2P off) -- 2P is our strong format
+                                  # and the package regresses it (PI 2026-06-22).
     # (LR_SKIP_COMETS already defaults to 1.)
 }
 
@@ -358,6 +362,13 @@ def _pkg_on(num_seats):
     """Is the focus package (reserve + coordinated/timed defense + front cap) active?
     4P via LR_RESERVE_4P; 2P/3P via LR_RESERVE_2P. Read at call time."""
     return _reserve_4p() if num_seats >= 4 else _reserve_2p()
+
+
+def _builder_on(num_seats):
+    """The hold-aware plan-builder is part of the focus package, so it turns on with the
+    package (4P via LR_RESERVE_4P) -- this keeps baking the package from leaking the
+    builder into 2P, where it regressed. An explicit LR_NATIVE_BUILDER still forces it."""
+    return _native_builder() or _pkg_on(num_seats)
 
 
 def _infer_inflight_fronts(fleets, planets, me):
@@ -1690,7 +1701,7 @@ def agent(obs, configuration=None):
     # flip-hazard leaf (== the 2-ply chooser) instead of the producer net-ship-delta
     # scorer, so far thin grabs / exposed-planet drains are never built. Rebind
     # score_units only; id2slot is derived identically so units_for stays valid.
-    if _native_builder() and orbit is not None:
+    if _builder_on(num_seats) and orbit is not None:
         try:
             _nat = _build_native_scorer(obs, me)
         except Exception:
@@ -2061,7 +2072,7 @@ def agent(obs, configuration=None):
         # collapses (captures not maintained). Require a REAL margin (~3 ships) so
         # only captures that actually stick are committed. Read at call time (env
         # override) -- unlike the producer ROI_FLOOR this is tunable per run.
-        floor = _f("LR_NATIVE_BUILDER_FLOOR", 3.0) if _native_builder() else ROI_FLOOR
+        floor = _f("LR_NATIVE_BUILDER_FLOOR", 3.0) if _builder_on(num_seats) else ROI_FLOOR
     else:
         current = value_fallback([])
         floor = 0.5

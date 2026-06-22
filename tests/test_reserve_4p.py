@@ -33,9 +33,19 @@ def _obs(seed=1393478882, n=2):
     return env.state[0]["observation"]
 
 
-def test_reserve_4p_default_off():
+def test_reserve_4p_shipped_on_4p_only():
+    # LR_RESERVE_4P ships ON (the 4P focus package), but is 4P-only and an explicit
+    # env var still overrides. 2P/3P never enter the package, and the hold-aware builder
+    # rides with the package (so it does NOT leak into 2P when baked).
     lr = _load_clean()
-    assert lr._reserve_4p() is False
+    assert lr._reserve_4p() is True              # shipped on
+    assert lr._pkg_on(4) is True and lr._pkg_on(2) is False
+    assert lr._builder_on(4) is True and lr._builder_on(2) is False
+    os.environ["LR_RESERVE_4P"] = "0"
+    try:
+        assert lr._reserve_4p() is False         # explicit override wins
+    finally:
+        os.environ.pop("LR_RESERVE_4P", None)
 
 
 def test_reserve_4p_byte_identical_in_2p():
