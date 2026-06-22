@@ -346,6 +346,36 @@ def _reserve_4p():
     return _cfg("LR_RESERVE_4P").strip().lower() in ("1", "true", "on", "yes")
 
 
+def _infer_inflight_fronts(fleets, planets, me):
+    """Distinct NON-our planet ids that our in-flight fleets are already heading toward
+    (a fleet's target ~ the nearest non-our planet ahead, within a ~20 deg cone of its
+    heading). Used by the 4P front cap to 'finish the corners we're already fighting for
+    before opening new ones' (PI 2026-06-22)."""
+    nonours = [p for p in planets if int(p.owner) != me]
+    tgts = set()
+    for f in fleets:
+        if int(f.owner) != me:
+            continue
+        fx, fy = float(f.x), float(f.y)
+        ang = float(getattr(f, "angle", 0.0))
+        hx, hy = math.cos(ang), math.sin(ang)
+        best, best_proj = None, 0.0
+        for p in nonours:
+            dx, dy = float(p.x) - fx, float(p.y) - fy
+            proj = dx * hx + dy * hy                  # distance along the heading
+            if proj <= 0.0:
+                continue                              # planet is behind the fleet
+            d = math.hypot(dx, dy)
+            if d <= 1e-6:
+                continue
+            perp = abs(dx * (-hy) + dy * hx) / d      # off-course fraction (sin of angle)
+            if perp <= 0.35 and (best is None or proj < best_proj):
+                best, best_proj = p, proj             # nearest aligned planet ahead
+        if best is not None:
+            tgts.add(int(best.id))
+    return tgts
+
+
 def _native_builder():
     """Default-OFF gate (PI 2026-06-21). When ON, the greedy plan-builder scores
     candidate launches with the native flip-hazard leaf (== the 2-ply chooser leaf
@@ -1869,7 +1899,7 @@ def agent(obs, configuration=None):
                         continue
                     dec = {"emit": [[sid, float(a2), dec_size]],
                            "units": units, "srcs": {sid: dec_size},
-                           "rank": rank, "front": front}
+                           "rank": rank, "front": front, "tgt": tid}
                     break
             if dec is not None:
                 candidates.append(dec)
@@ -1890,7 +1920,7 @@ def agent(obs, configuration=None):
                     continue
                 solo = {"emit": [[sid, float(a2), size]],
                         "units": units, "srcs": {sid: size},
-                        "rank": rank, "front": front}
+                        "rank": rank, "front": front, "tgt": tid}
                 break
         if solo is not None:
             candidates.append(solo)
@@ -1920,7 +1950,7 @@ def agent(obs, configuration=None):
             units = units_for(triples)
             if not (units is None and id2slot is not None):
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
-                                   "rank": rank, "front": front})
+                                   "rank": rank, "front": front, "tgt": tid})
 
     # Regroup / defense (default ON; confirmed vs Producer V2): reinforce our own
     # planets that an enemy fleet is bearing down on with enough force to flip --
@@ -2038,11 +2068,24 @@ def agent(obs, configuration=None):
         scored.sort(key=lambda e: -e[0])               # highest marginal value first
         candidates = [c for _, c in scored]
 
+    # Front cap (4P + reserve, PI 2026-06-22): finish the corners we're already fighting
+    # for before opening new ones. Count distinct enemy/neutral planets our in-flight
+    # fleets already head to (active fronts); allow at most LR_MAX_FRONTS NEW attack
+    # fronts this turn so force concentrates on winning current contests instead of
+    # dribbling to fresh corners. Defense and reinforcing an existing front are exempt.
+    _front_cap_on = _reserve_4p() and num_seats >= 4
+    _open_fronts = _infer_inflight_fronts(fleets, planets, me) if _front_cap_on else set()
+    _new_front_budget = max(0, _i("LR_MAX_FRONTS", 2) - len(_open_fronts)) if _front_cap_on else 0
+
     for c in candidates:
         if (time.perf_counter() - t0) * 1000.0 > budget_ms:
             break
         if any(avail.get(s, 0) < sz for s, sz in c["srcs"].items()):
             continue
+        is_new_front = (_front_cap_on and "tgt" in c and c.get("kind") != "defend"
+                        and int(c["tgt"]) not in _open_fronts)
+        if is_new_front and _new_front_budget <= 0:
+            continue                          # don't open another corner; finish current
         if orbit is not None:
             v = score_units(committed_units + c["units"])
         else:
@@ -2054,6 +2097,9 @@ def agent(obs, configuration=None):
             current = v
             for s, sz in c["srcs"].items():
                 avail[s] = avail.get(s, 0) - sz
+            if is_new_front:
+                _open_fronts.add(int(c["tgt"]))
+                _new_front_budget -= 1
 
     # ---- 2-ply lookahead pick (2P only): choose among a few full-plans by
     #      their value AFTER the producer's reply + a producer-vs-producer turn,
