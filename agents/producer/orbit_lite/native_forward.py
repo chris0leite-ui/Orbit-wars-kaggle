@@ -113,12 +113,20 @@ def build_candidate_trajectories(
 def reachable_enemy_mass(
     *,
     cross_dist: Tensor,   # [K+1, P, P]  cross_dist[k, s, t] = dist(s@0, t@k)
-    ships: Tensor,        # [P] float (current garrison)
+    ships: Tensor,        # [P] float (current garrison; enemy mass + target defense)
     is_enemy: Tensor,     # [P] bool
     H: int,
     aggregate: str = "max",
     prod: Tensor | None = None,   # [P] enemy production rate (None => no growth)
     growth_alpha: float = 0.0,    # damp the over-horizon production growth; 0 = static
+    our_garrison: Tensor | None = None,  # [P] target defense (allocate; default=ships)
+    alloc_w_prox: float = 1.0,    # allocate: proximity weight
+    alloc_w_val: float = 1.0,     # allocate: planet-value (production) weight
+    alloc_w_def: float = 0.5,     # allocate: inverse-garrison (weak-spot) weight
+    alloc_eps: float = 1.0,       # allocate: numerical floor for logs / prox denom
+    target_mask: Tensor | None = None,  # [P] bool valid targets (allocate; default=~is_enemy)
+    exclude_self: bool = False,   # allocate: mask the source==target diagonal
+    mass_by_step: Tensor | None = None,  # [P, H+1] per-step source mass (dynamic threat)
 ) -> Tensor:
     """Enemy mass physically routable to each planet by step k -> ``[P, H+1]``.
 
@@ -135,6 +143,17 @@ def reachable_enemy_mass(
       (garrison 50 vs "threat" 340), a partial reinforcement can never help, and
       the agent abandons its planets -> the observed mid-game passivity/collapse.
     - ``"sum"``: total reachable enemy mass (the old over-pessimistic behaviour).
+    - ``"allocate"`` (PI 2026-06-20, conserved): each enemy source q splits its
+      OWN mass over exactly the NON-enemy planets it can reach by step k, via a
+      softmax weighted toward our close / big / weakly-defended planets. Summing
+      within a source spends q exactly ONCE (no over-count across our planets);
+      summing across sources gives the grand total = total reachable enemy mass
+      (conserved / "integrates to enemy strength"); a planet no enemy can reach
+      gets 0 (proximity honored). The per-planet share is intuitive: it rises with
+      opponent strength (mass_k), with proximity (reach slack), with planet value
+      (log prod), and falls with our garrison (-log defense). This is the
+      principled middle between ``max`` (one fleet, ignores the army) and ``sum``
+      (whole army on every planet). ``alloc_w_*`` tune the softmax peakedness.
 
     ANTICIPATORY growth (``prod`` + ``growth_alpha`` > 0): the reservoir grows by
     the enemy's production accrued by step k — ``mass_k = ships + prod·k·alpha``.
@@ -156,15 +175,63 @@ def reachable_enemy_mass(
     enemy_prod = (torch.where(is_enemy, prod.to(fdtype), torch.zeros_like(ships))
                   if grow else None)                            # [P]
 
+    allocate = aggregate == "allocate"
+    if allocate:
+        # Per-TARGET bias for the allocation softmax (constant in k): planet value
+        # (concave log prod, so a big planet doesn't dominate) minus a gentle
+        # inverse-garrison term (weak spots draw more of the pot). Garrison is
+        # deliberately ALSO in flip_prob downstream — distinct jobs (target
+        # selection here vs combat resistance there).
+        tgt_def = (our_garrison if our_garrison is not None else ships).to(fdtype)
+        val_vec = (prod.to(fdtype) if prod is not None
+                   else torch.ones_like(ships))                 # [P]
+        log_val = alloc_w_val * torch.log(val_vec.clamp(min=0.0) + alloc_eps)
+        log_def = alloc_w_def * torch.log(tgt_def.clamp(min=0.0) + alloc_eps)
+        target_bias = (log_val - log_def).view(1, P)            # [1, P]
+        # Valid targets: default = non-enemy (mine + neutral). `target_mask` lets the
+        # same primitive be pointed a third way -- our planets reinforcing OUR planets
+        # (sources=is_mine, target_mask=is_mine) for the reinforcement-race holdability.
+        tmask = (~is_enemy) if target_mask is None else target_mask
+        not_enemy = tmask.view(1, P)                            # [1, P]
+        self_mask = (~torch.eye(P, dtype=torch.bool, device=device)
+                     if exclude_self else None)                 # [P, P] off-diagonal
+        NEG = float(torch.finfo(fdtype).min) / 4.0
+
     out = torch.zeros(P, H + 1, dtype=fdtype, device=device)
     reachable_any = torch.zeros(P, P, dtype=torch.bool, device=device)  # [src, tgt]
     for k in range(1, Hc + 1):
         d_k = cross_dist[k]                                    # [src, tgt] dist(s@0, t@k)
         reach_k = d_k <= (float(k) * speed.view(P, 1))         # [src, tgt]
         reachable_any = reachable_any | reach_k
-        # per-source mass at step k: current garrison + production accrued (damped).
-        mass_k = (enemy_mass + enemy_prod * (float(growth_alpha) * float(k))
-                  if grow else enemy_mass)                     # [P]
+        # per-source mass at step k. DYNAMIC ("see the opponent coming", PI
+        # 2026-06-20): when `mass_by_step` is given, use the PROJECTED garrison at
+        # step k (which already lands in-flight fleets + accrues production) so the
+        # threat/reinforcement RISES as the opponent builds up / approaches, instead
+        # of a frozen early snapshot. Else: the frozen snapshot [+ damped growth].
+        if mass_by_step is not None:
+            mass_k = torch.where(is_enemy, mass_by_step[:, k].to(fdtype),
+                                 torch.zeros_like(ships))        # [P]
+        else:
+            mass_k = (enemy_mass + enemy_prod * (float(growth_alpha) * float(k))
+                      if grow else enemy_mass)                  # [P]
+        if allocate:
+            # Reach slack at step k (>=0 where reachable). Softmax per SOURCE over
+            # the non-enemy planets it can reach; invalid targets masked to -inf.
+            prox = (float(k) * speed.view(P, 1)) - d_k         # [src, tgt]
+            denom = (float(k) * speed.view(P, 1) + alloc_eps)  # [src, 1]
+            logit = alloc_w_prox * (prox / denom) + target_bias  # [src, tgt]
+            valid = reachable_any & not_enemy                  # [src, tgt]
+            if self_mask is not None:
+                valid = valid & self_mask                      # a planet doesn't reinforce itself
+            logit = torch.where(valid, logit,
+                                torch.full_like(logit, NEG))
+            m = logit.max(dim=1, keepdim=True).values          # [src, 1]
+            ex = torch.exp(logit - m)                          # invalid -> ~0
+            w = ex / ex.sum(dim=1, keepdim=True).clamp(min=1e-30)  # [src, tgt]
+            has_tgt = valid.any(dim=1, keepdim=True).to(fdtype)   # [src, 1]
+            share = (mass_k.view(P, 1) * w) * has_tgt          # [src, tgt]
+            out[:, k] = share.sum(dim=0)                       # per-target share sum
+            continue
         masked = reachable_any.to(fdtype) * mass_k.view(P, 1)  # [src, tgt]
         if aggregate == "sum":
             out[:, k] = masked.sum(dim=0)
@@ -194,9 +261,14 @@ def hazard_ownership_value(
     discount: float = 1.0,
     concentrate: bool = False,
     model_opp_expansion: bool = True,
+    def_reach: Tensor | None = None,   # [P, H+1] OUR reinforcement mass onto each planet
+    def_weight: float = 1.0,           # weight of reinforcement in the leak denominator
     value_mode: str = "ships",
     inflight: Tensor | None = None,
     terminal: float = 12.0,
+    off_reach: Tensor | None = None,   # [P, H+1] OUR routable mass onto each planet
+    off_weight: float = 0.0,           # offensive-potential weight (0 => term OFF)
+    off_steepness: float = 5.0,        # capture-prob steepness (mirror of `steepness`)
 ) -> Tensor:
     """Per-candidate value over the horizon -> ``[C]``.
 
@@ -227,11 +299,20 @@ def hazard_ownership_value(
 
     atk = atk_reach.view(1, P, H1).to(fdtype)
     garrison = ships.clamp(min=0.0)
+    # Defender of the flip contest. By default the planet's own garrison; with
+    # `def_reach` (PI 2026-06-20, the reinforcement race) it ALSO counts how much our
+    # OTHER planets can route to support it -> holdability becomes "can we reinforce
+    # faster than the enemy attacks", so far/unsupportable captures flip (high leak)
+    # and close/supported ones stick. `def_reach` is conserved + ~0 off our planets,
+    # so neutrals/enemy are unaffected. None => byte-identical (garrison only).
+    deff = garrison
+    if def_reach is not None and def_weight != 0.0:
+        deff = garrison + float(def_weight) * def_reach.view(1, P, H1).to(fdtype)
     # Zero the hazard where NO enemy mass can reach (atk==0): a planet under no
     # physical threat must have flip probability 0, not the sigmoid's nonzero
     # floor. This also pins present-certainty: atk_reach[:,0]==0 by construction,
     # so step-0 survival is exactly 1 (the present is known, not discounted).
-    leak = flip_prob(atk, garrison, steepness=steepness) * (atk > 0).to(fdtype)
+    leak = flip_prob(atk, deff, steepness=steepness) * (atk > 0).to(fdtype)
 
     is_mine = (owner == me).to(fdtype)
     is_opp = ((owner >= 0) & (owner != me)).to(fdtype)
@@ -303,8 +384,39 @@ def hazard_ownership_value(
     if model_opp_expansion:
         s_opp = s_opp + is_neutral * leak    # ceded reachable neutrals -> opp
 
+    # OFFENSIVE POTENTIAL (PI 2026-06-20, mirror of the defensive flip-hazard):
+    # credit, on each enemy/neutral planet we can reach, the expected ship-mass we
+    # could CONVERT by capturing it -- where `off_reach` is OUR routable mass onto
+    # that planet (computed exactly like `atk_reach`, but with our planets as the
+    # sources). Intent: HOLDING a massed frontier keeps this potential (patience),
+    # dribbling ships into far neutrals destroys it (anti-scatter), a concentrated
+    # capture realizes it (decisive action).
+    #
+    # STATUS (corrected 2026-06-21): this term was refuted *standalone* on the plain
+    # native leaf (off_weight 0.5 lost the early test seeds while reducing scatter,
+    # because summing over ALL reachable targets lets "sit still and threaten
+    # everything" out-score "commit and take one" -> passivity). BUT it is now
+    # SHIPPED ON (LR_NATIVE_OFFENSE=1) layered on the concentrate+reinforce stack
+    # (commit dca1504d): the concentration generator supplies decisive committing
+    # candidates, so the additive potential reweights toward "mass for a real
+    # capture" instead of biasing to passivity. That stack is sub 53906150 (live
+    # mu ~1154.5, the best to date). The known remaining weakness is NOT scatter --
+    # it is blowing a built production lead (lead-then-collapse); see
+    # knowledge-base/thoughts/2026-06-21-lead-then-collapse-vs-v2.md. A still-better
+    # version would be a COMPETITIVE (commit-attributed) potential, not this additive
+    # one. OFF (off_reach None or off_weight 0) => block skipped entirely.
+    off_gain = None
+    if off_reach is not None and off_weight != 0.0:
+        off = off_reach.view(1, P, H1).to(fdtype)
+        cap = flip_prob(off, garrison, steepness=off_steepness) \
+            * (off > 0).to(fdtype)                                # [C, P, H+1] capture prob
+        swing = is_opp * 2.0 + is_neutral                         # enemy=2w swing, neutral=+w
+        off_gain = (float(off_weight) * cap * swing * w)          # [C, P, H+1]
+
     if not concentrate:
         margin_k = ((s_mine - s_opp) * w).sum(dim=1)             # [C, H+1]
+        if off_gain is not None:
+            margin_k = margin_k + off_gain.sum(dim=1)
         if inflight_margin is not None:
             margin_k = margin_k + inflight_margin
         return (margin_k * disc.view(1, H1)).sum(dim=1) / norm
