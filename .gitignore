@@ -101,3 +101,7 @@ audit/live-episodes/*/episode-*-replay.json
 
 # Rendered game replays (large HTML artifacts; regenerate via render, do not commit)
 audit/game_*.html
+
+# transient one-capture A/B run logs (results recorded in KB/handover)
+audit/ab_one_capture_2p.log
+audit/ab_one_capture_2p.console
