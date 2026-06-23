@@ -1,8 +1,8 @@
-"""Unit tests for the one-capture-per-round cap (LR_ONE_CAPTURE).
+"""Unit tests for the contested-only one-capture-per-round cap (LR_ONE_CAPTURE).
 
-_cap_emit is the final-move enforcement: keep every non-offensive launch
-(defense / reinforcement of our own planets) plus the single highest-ship
-offensive target; drop other offensive targets. OFF -> unchanged (byte-identical).
+Cap counts only CONTESTED attacks (enemy-held planets, or neutrals a rival is
+racing us for). Uncontested neutral grabs (open expansion) and defensive regroup
+flow freely. OFF -> unchanged (byte-identical).
 """
 import importlib.util
 import math
@@ -27,57 +27,71 @@ def _load():
 M = _load()
 
 # Planets: [id, owner, x, y, radius, ships, production]. me = player 0.
-# id0 mine @ (10,10); id1 mine @ (12,10); id2 enemy @ (90,10); id3 neutral @ (10,90).
+# id0,id1 mine; id2 enemy @(90,10); id3 enemy @(90,90); id4 neutral @(10,50) FAR
+# from both enemies (uncontested); id5 neutral @(88,10) adjacent to enemy id2
+# (contested). Well-separated directions from id0/id1 so the cone match is clean.
 OBS = {
     "player": 0,
+    "fleets": [],
     "planets": [
         [0, 0, 10.0, 10.0, 2.0, 50.0, 3.0],
         [1, 0, 12.0, 10.0, 2.0, 40.0, 2.0],
         [2, 1, 90.0, 10.0, 2.0, 30.0, 3.0],
-        [3, -1, 10.0, 90.0, 2.0, 20.0, 2.0],
+        [3, 1, 90.0, 90.0, 2.0, 28.0, 3.0],
+        [4, -1, 10.0, 50.0, 2.0, 20.0, 2.0],
+        [5, -1, 88.0, 10.0, 2.0, 10.0, 2.0],
     ],
 }
+PL = {int(p[0]): p for p in OBS["planets"]}
 
 
 def _ang(src, dst):
     return math.atan2(dst[1] - src[1], dst[0] - src[0])
 
 
+def _row(i):
+    return PL[i]
+
+
+def test_classifier_enemy_and_contested_neutral_vs_open_grab():
+    fl, ps, me = OBS["fleets"], OBS["planets"], 0
+    assert M._contested_attack(_row(2), 10.0, ps, fl, me) is True   # enemy-held
+    assert M._contested_attack(_row(5), 10.0, ps, fl, me) is True   # neutral by enemy id2
+    assert M._contested_attack(_row(4), 5.0, ps, fl, me) is False   # open neutral, far
+
+
 def test_off_path_is_identity():
     os.environ["LR_ONE_CAPTURE"] = "0"
-    action = [[0, _ang((10, 10), (90, 10)), 20], [1, _ang((12, 10), (10, 90)), 15]]
+    action = [[0, _ang((10, 10), (90, 10)), 20], [1, _ang((12, 10), (90, 90)), 15]]
     assert M._cap_emit([list(a) for a in action], OBS, 0) == action
 
 
-def test_caps_to_one_offensive_target_keeps_biggest():
+def test_two_enemy_attacks_keep_biggest():
     os.environ["LR_ONE_CAPTURE"] = "1"
-    # Two offensive launches: 20 ships at enemy id2, 15 ships at neutral id3.
-    a_enemy = [0, _ang((10, 10), (90, 10)), 20]      # -> id2 (more ships)
-    a_neutral = [1, _ang((12, 10), (10, 90)), 15]    # -> id3
-    out = M._cap_emit([a_enemy, a_neutral], OBS, 0)
-    assert a_enemy in out and a_neutral not in out   # keep the larger attack only
+    atk2 = [0, _ang((10, 10), (90, 10)), 25]      # -> enemy id2 (bigger)
+    atk3 = [1, _ang((12, 10), (90, 90)), 18]      # -> enemy id3
+    out = M._cap_emit([atk2, atk3], OBS, 0)
+    assert atk2 in out and atk3 not in out
     assert len(out) == 1
 
 
-def test_defense_launches_are_uncapped():
+def test_uncontested_neutral_grab_is_free():
     os.environ["LR_ONE_CAPTURE"] = "1"
-    # Reinforce own planet id1 (from id0) + one attack at id2 + one attack at id3.
-    d = [0, _ang((10, 10), (12, 10)), 10]            # -> own planet id1 (defense)
-    atk1 = [1, _ang((12, 10), (90, 10)), 25]         # -> enemy id2 (biggest)
-    atk2 = [0, _ang((10, 10), (10, 90)), 12]         # -> neutral id3
-    out = M._cap_emit([d, atk1, atk2], OBS, 0)
-    assert d in out                                   # defense always kept
-    assert atk1 in out and atk2 not in out            # one attack (the bigger) kept
+    atk2 = [0, _ang((10, 10), (90, 10)), 25]      # -> enemy id2 (contested)
+    grab4 = [1, _ang((12, 10), (10, 50)), 15]     # -> open neutral id4 (free)
+    out = M._cap_emit([atk2, grab4], OBS, 0)
+    assert atk2 in out and grab4 in out           # both kept: 1 attack + free expansion
     assert len(out) == 2
 
 
-def test_single_offensive_target_unchanged():
+def test_defense_and_expansion_uncapped():
     os.environ["LR_ONE_CAPTURE"] = "1"
-    # Gang-up: two sources -> same enemy target id2. One target -> unchanged.
-    g1 = [0, _ang((10, 10), (90, 10)), 20]
-    g2 = [1, _ang((12, 10), (90, 10)), 18]
-    out = M._cap_emit([g1, g2], OBS, 0)
-    assert out == [g1, g2]
+    d = [0, _ang((10, 10), (12, 10)), 10]         # reinforce own id1 (defense)
+    atk2 = [1, _ang((12, 10), (90, 10)), 25]      # -> enemy id2 (the one attack)
+    grab4 = [0, _ang((10, 10), (10, 50)), 12]     # -> open neutral id4 (free)
+    out = M._cap_emit([d, atk2, grab4], OBS, 0)
+    assert d in out and grab4 in out and atk2 in out
+    assert len(out) == 3
 
 
 def teardown_function(_):

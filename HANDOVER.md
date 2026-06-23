@@ -1,5 +1,29 @@
 # HANDOVER.md — next-session brief
 
+## ⚠️ 2026-06-23 — FINAL DAY, one-capture lever (read this first)
+- **Branch note:** the live code was on `claude/submission-strategy-review-r48nve`
+  (the assigned `hjdr6z` was stale = `origin/main`). r48nve merged into hjdr6z; all
+  work since is on hjdr6z. **On session start, reconcile branch vs live submissions.**
+- **Live best = pure offense stack ~1112–1139** (sub 53906150 / 53938241: the four
+  native levers only). Neutral-margin (~1035) and the 4P reserve package (~1044)
+  both settled BELOW it on the ladder.
+- **New lever `LR_ONE_CAPTURE` (default OFF, baked ON in the ship config):** commit
+  at most one **contested** capture per round (enemy-held, or a neutral a rival is
+  racing us for); uncontested neutral grabs + defensive regroup flow freely. Built
+  on pure offense. Three-layer enforcement (greedy cap / producer-floor trim /
+  `_cap_emit` backstop). Tunable `LR_CONTEST_BUF` (3.0).
+- **Why contested-only:** the first version capped ALL captures and **regressed 2P
+  vs V2 (47%→38%, n=32)** by starving expansion (rendered loss seed 610634183: only
+  44 launches, behind from step 27). Contested-only keeps the snowball.
+- **Status at handoff:** code + tests green (`tests/test_one_capture.py` 5/5,
+  `test_bundle` 10/10), mechanism verified (≤1 contested target/turn, neutrals
+  free). **Pending:** real-loader timing smoke + the n=32 contested-only A/B vs V2
+  (`scripts/ab_one_capture.py 32 2`) — was blocked on a transient infra outage.
+  **No submission yet** (PI deciding after the A/B; Rule 42 eviction = protect
+  offense ~1112 in the kept pair). KB: `2026-06-23-one-capture-per-round.md`.
+
+---
+
 > **Refreshed 2026-06-20 (deep-search-refuted session).** Live agent is
 > `least_resistance` (2-ply take-and-hold). This session tested four strength
 > ideas, ALL null/negative at proper sample — read the two new KB thoughts:

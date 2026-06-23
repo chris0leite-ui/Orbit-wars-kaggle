@@ -1647,24 +1647,56 @@ def _robust_impact_pick(obs, configuration, me, num_seats, committed_caps,
     return plan
 
 
-def _cap_emit(action, obs_d, me):
-    """Enforce one-capture-per-round on the FINAL emitted move (PI 2026-06-23).
+def _contested_attack(tgt_row, our_eta, planets, fleets, me):
+    """Does capturing `tgt_row` count as a CONTESTED ATTACK toward the one-per-round
+    cap (PI 2026-06-23)? True for an enemy-held planet, or a NEUTRAL a rival is
+    racing us for (an enemy planet/fleet can reach it by about our arrival). An
+    uncontested neutral (open grab nobody else contests) returns False, so expansion
+    flows freely -- the fix for the all-captures version's under-expansion. Indexing
+    works for both Planet/Fleet namedtuples and raw obs rows. our_eta in turns."""
+    owner = int(tgt_row[1])
+    if owner == int(me):
+        return False
+    if owner != -1:
+        return True                                   # enemy-held -> always an attack
+    tx, ty = float(tgt_row[2]), float(tgt_row[3])
+    lim = float(our_eta) + _f("LR_CONTEST_BUF", 3.0)
+    for p in planets:
+        po = int(p[1])
+        if po != int(me) and po != -1:
+            if dist((tx, ty), (float(p[2]), float(p[3]))) / max(
+                    1e-6, fleet_speed(float(p[5]))) <= lim:
+                return True
+    for f in fleets:
+        fo = int(f[1])
+        if fo != int(me) and fo != -1:
+            if dist((tx, ty), (float(f[2]), float(f[3]))) / max(
+                    1e-6, fleet_speed(float(f[6]))) <= lim:
+                return True
+    return False
 
-    Keep every launch that does NOT clearly head at a non-our (enemy/neutral)
-    planet -- those are defensive regroup / reinforcement of our own planets, which
-    stays uncapped -- and, among launches that DO target non-our planets, keep only
-    the single target carrying the most ships (the highest-confidence attack). This
-    guarantees 'at most one capture attack per round, regrouping still happens'
-    regardless of which internal path produced the move. OFF -> unchanged. Read at
-    call time (env override) so the OFF path is byte-identical."""
+
+def _cap_emit(action, obs_d, me):
+    """Enforce one-CONTESTED-capture-per-round on the FINAL emitted move (PI
+    2026-06-23).
+
+    Keep every launch that is NOT a contested attack -- defensive regroup /
+    reinforcement of our own planets, AND uncontested neutral grabs (open expansion)
+    -- and, among launches that DO target a CONTESTED planet (enemy-held, or a
+    neutral a rival is racing us for), keep only the single target carrying the most
+    ships (the highest-confidence attack). So 'one high-confidence capture attack per
+    round, regrouping + expansion still happen' holds on every code path. OFF ->
+    unchanged. Read at call time so the OFF path is byte-identical."""
     if not action or not _one_capture():
         return action
     planets = obs_d.get("planets", []) or []
+    fleets = obs_d.get("fleets", []) or []
     nonours = [p for p in planets if int(p[1]) != int(me)]
     if not nonours:
         return action
     srcs = {int(p[0]): p for p in planets}
-    keep_ids = set()                      # launch objects to keep regardless (defense)
+    rows = {int(p[0]): p for p in planets}
+    keep_ids = set()                      # launches kept regardless (defense / open grab)
     by_target = {}                        # tgt_id -> [total_ships, [launch, ...]]
     for launch in action:
         try:
@@ -1688,12 +1720,17 @@ def _cap_emit(action, obs_d, me):
             if perp <= 0.35 and proj < bp:
                 best, bp = int(p[0]), proj
         if best is None:
-            keep_ids.add(id(launch))                  # not aimed at enemy/neutral -> keep
+            keep_ids.add(id(launch)); continue        # not aimed at enemy/neutral -> keep
+        tgt_row = rows.get(best)
+        our_eta = dist((sx, sy), (float(tgt_row[2]), float(tgt_row[3]))) / max(
+            1e-6, fleet_speed(max(1.0, ships)))
+        if tgt_row is None or not _contested_attack(tgt_row, our_eta, planets, fleets, me):
+            keep_ids.add(id(launch))                  # uncontested neutral grab -> free
         else:
             ent = by_target.setdefault(best, [0.0, []])
             ent[0] += ships; ent[1].append(launch)
     if len(by_target) <= 1:
-        return action                                 # already <= 1 offensive target
+        return action                                 # already <= 1 contested target
     best_tgt = max(by_target.items(), key=lambda kv: kv[1][0])[0]
     for lh in by_target[best_tgt][1]:
         keep_ids.add(id(lh))
@@ -1958,6 +1995,10 @@ def _agent_impl(obs, configuration=None):
         if is_enemy and enemy_boost != 1.0:
             rank *= enemy_boost
         front = frontier_eta((float(tgt.x), float(tgt.y)))
+        # Does this capture count toward the one-attack-per-round cap? Enemy-held, or
+        # a neutral a rival is racing us for. Uncontested neutral grabs (open
+        # expansion) do NOT count, so the cap never starves expansion (PI 2026-06-23).
+        contested = _contested_attack(tgt, shots[0][0], planets, fleets, me)
 
         # Decisive capture (PI 2026-06-20): ONE big fleet from our STRONGEST source,
         # sized to beat the target's defenders AND the strongest enemy force that can
@@ -1997,7 +2038,7 @@ def _agent_impl(obs, configuration=None):
                         continue
                     dec = {"emit": [[sid, float(a2), dec_size]],
                            "units": units, "srcs": {sid: dec_size},
-                           "rank": rank, "front": front, "tgt": tid}
+                           "rank": rank, "front": front, "tgt": tid, "contested": contested}
                     break
             if dec is not None:
                 candidates.append(dec)
@@ -2018,7 +2059,7 @@ def _agent_impl(obs, configuration=None):
                     continue
                 solo = {"emit": [[sid, float(a2), size]],
                         "units": units, "srcs": {sid: size},
-                        "rank": rank, "front": front, "tgt": tid}
+                        "rank": rank, "front": front, "tgt": tid, "contested": contested}
                 break
         if solo is not None:
             candidates.append(solo)
@@ -2048,7 +2089,7 @@ def _agent_impl(obs, configuration=None):
             units = units_for(triples)
             if not (units is None and id2slot is not None):
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
-                                   "rank": rank, "front": front, "tgt": tid})
+                                   "rank": rank, "front": front, "tgt": tid, "contested": contested})
 
     # Regroup / defense (default ON; confirmed vs Producer V2): reinforce our own
     # planets that an enemy fleet is bearing down on with enough force to flip --
@@ -2189,8 +2230,11 @@ def _agent_impl(obs, configuration=None):
         if any(avail.get(s, 0) < sz for s, sz in c["srcs"].items()):
             continue
         is_capture = c.get("kind") != "defend"
-        if _one_cap_on and is_capture and _caps_committed >= _max_caps:
-            continue                          # one high-confidence attack this round; regroup still free
+        # Only CONTESTED captures (enemy / rival-raced neutral) count toward the cap;
+        # uncontested neutral grabs flow freely so expansion is never starved.
+        counts_to_cap = is_capture and c.get("contested", True)
+        if _one_cap_on and counts_to_cap and _caps_committed >= _max_caps:
+            continue                          # one high-confidence attack this round; regroup + expansion still free
         is_new_front = (_front_cap_on and "tgt" in c and c.get("kind") != "defend"
                         and int(c["tgt"]) not in _open_fronts)
         if is_new_front and _new_front_budget <= 0:
@@ -2206,7 +2250,7 @@ def _agent_impl(obs, configuration=None):
             current = v
             for s, sz in c["srcs"].items():
                 avail[s] = avail.get(s, 0) - sz
-            if is_capture:
+            if counts_to_cap:
                 _caps_committed += 1
             if is_new_front:
                 _open_fronts.add(int(c["tgt"]))
