@@ -62,15 +62,17 @@ import time
 # env var still overrides (e.g. LR_NATIVE_LEAF=0 reverts to the ship-count leaf);
 # any gate NOT listed here keeps its default-OFF behaviour.
 _SHIP_DEFAULTS = {
+    # Pure PROVEN OFFENSE stack (== sub 53906150 @ mu 1139.9, our best-measured
+    # ladder config): the four native levers only. Neutral-margin and the 4P
+    # reserve package are intentionally NOT baked here -- both settled lower on
+    # the live ladder (~1035-1037) than this offense stack (PI 2026-06-23).
     "LR_NATIVE_LEAF": "1",
     "LR_NATIVE_REINFORCE": "1",
     "LR_CONCENTRATE": "1",      # additive: decisive captures + value-ordered commit
     "LR_NATIVE_OFFENSE": "1",   # credit massing/holding; far dribble grabs score negative
-    "LR_NEUTRAL_MARGIN": "0.25",  # mass expansion fleets: faster arrival + land defendable
-    "LR_RESERVE_4P": "1",         # 4P-ONLY focus package: coalition reserve + coordinated/
-                                  # timed defense + front cap + hold-aware builder. 2P stays
-                                  # untouched (LR_RESERVE_2P off) -- 2P is our strong format
-                                  # and the package regresses it (PI 2026-06-22).
+    # One high-confidence capture per round; defensive regroup stays uncapped. Both
+    # 2P and 4P (PI 2026-06-23). The single isolated change on top of proven offense.
+    "LR_ONE_CAPTURE": "1",
     # (LR_SKIP_COMETS already defaults to 1.)
 }
 
@@ -155,32 +157,6 @@ except Exception:
 from lib.fast_sim import from_obs, clone, step, ship_totals
 from lib.opp_model import lite_greedy_policy
 from lib.value_heads import inflight_value
-
-# Optional V2 opponent model for the search (selected by LR_DEEP_OPP=2). V2 is
-# pure-Python (lib.* only), stateless, and its agent(obs) already returns the
-# [[src, angle, ships], ...] move format step() consumes -- no conversion needed.
-# Resolved in two layouts like the producer above: in-repo dev (sibling
-# ../v2/main.py) and a flat submission tar (v2_main.py next to this file).
-_V2_OK = False
-try:
-    try:
-        _V2_THIS = os.path.dirname(os.path.abspath(__file__))
-    except NameError:               # kaggle execs agents without __file__
-        _V2_THIS = (sys.path[-1] if sys.path
-                    and os.path.isfile(os.path.join(sys.path[-1], "main.py"))
-                    else os.getcwd())
-    _v2_dev = os.path.abspath(os.path.join(_V2_THIS, "..", "v2", "main.py"))
-    _v2_flat = os.path.join(_V2_THIS, "v2_main.py")
-    _v2_path = _v2_dev if os.path.isfile(_v2_dev) else _v2_flat
-    import importlib.util as _ilu2
-    _v2_spec = _ilu2.spec_from_file_location("_lr_v2_main", _v2_path)
-    _v2_mod = _ilu2.module_from_spec(_v2_spec)
-    sys.modules["_lr_v2_main"] = _v2_mod
-    _v2_spec.loader.exec_module(_v2_mod)
-    _v2_agent = _v2_mod.agent
-    _V2_OK = True
-except Exception:
-    _V2_OK = False
 
 
 # --------------------------------------------------------------------------
@@ -540,57 +516,8 @@ def _deep_opp():
     """Per-node opponent model for the search rollouts (_twoply_pick/_deep_pick).
     0 = producer mirror (accurate, ~10-50ms/call -- the per-node bottleneck);
     1 = lite_greedy (cheap, ~1-2ms, still models expansion) so deeper search
-    fits the 1000ms wall; 2 = V2, the actual benchmark opponent (pure-Python,
-    stateless) -- models the policy we are scored against directly. Default 0
-    keeps current behaviour byte-identical."""
+    fits the 1000ms wall. Default 0 keeps current behaviour byte-identical."""
     return _i("LR_DEEP_OPP", 0)
-
-
-def _win_leaf():
-    """Win-equity leaf (default 0 = OFF, byte-identical). When ON, the leaf
-    evaluator returns our CONTROL SHARE at the horizon -- (ours - theirs) /
-    (ours + theirs) in [-1, 1] -- instead of the raw ship margin (ours - theirs).
-    Rationale: the ladder scores WINS, not ship surplus, so a +5000 blowout and a
-    +1 squeaker count the same; the linear-margin leaf rates the blowout 5000x
-    higher and so trades robustness for expected magnitude (the fat negative tail).
-    The share is non-monotone in the margin (it depends on the contested total),
-    so it genuinely re-ranks plans: among equal-margin plans it prefers the one
-    that wins with a SMALLER contested pool (more decisive, less exposed control),
-    and once dominant it stops gambling for extra surplus. Parameter-free."""
-    return _i("LR_WIN_LEAF", 0) >= 1
-
-
-def _robust_search():
-    """Robustness-aware multi-reply search (default 0 = OFF, byte-identical).
-    When ON, the 2-ply pick scores each candidate plan against a SET of plausible
-    turn-1 opponent replies and keeps the WORST case (min leaf) rather than a
-    single predicted reply. Rationale: our losses vs a strong peer come from
-    opponent-response uncertainty -- a plan that looks best against the one
-    predicted reply can lose badly against a slightly different one (the fat
-    negative tail). Worst-casing over a small reply set prefers plans that hold up
-    no matter which way the opponent jumps. The replies are precomputed ONCE and
-    shared across all candidate plans -- valid because moves are simultaneous (the
-    opponent cannot see our plan). Reply set: the producer mirror plus lite_greedy
-    (two genuinely different policies; both already bundled). OFF -> the set is the
-    single base reply, so min-of-one reproduces today's pick exactly."""
-    return _i("LR_ROBUST_SEARCH", 0) >= 1
-
-
-def _best_response():
-    """Best-responding (clairvoyant) opponent in the 2-ply pick (default 0 = OFF,
-    byte-identical). Today the turn-1 opponent reply is computed on the PRE-plan
-    board and applied simultaneously (the opponent can't see our move). When ON,
-    we instead apply OUR plan alone, then let the opponent move in REACTION to the
-    resulting board -- a Stackelberg leader/follower step where the opponent
-    punishes this specific plan's weakness. Rationale (the session's key finding):
-    what disciplines plan selection is the STRENGTH of the modelled adversary, not
-    its accuracy -- modelling the real but weak/sparse V2 made the search
-    complacent (it predicted an idle opponent and over-extended). A best-responding
-    producer is a TOUGHER sparring partner than the simultaneous one: it reacts to
-    our move, so fragile plans get punished hard and robust plans score better,
-    which is exactly the discrimination we want. Same per-node opponent model (the
-    LR_DEEP_OPP selection); only WHEN it moves changes."""
-    return _i("LR_BEST_RESPONSE", 0) >= 1
 
 
 def _skip_comets():
@@ -627,6 +554,24 @@ def _concentrate():
         "1", "true", "on", "yes")
 
 
+def _one_capture():
+    """Default-OFF gate (PI 2026-06-23). When ON, the greedy commit loop commits at
+    most LR_MAX_CAPTURES (default 1) OFFENSIVE captures per turn -- the single
+    highest-confidence one -- while DEFENSIVE regroup/reinforcement (kind=="defend")
+    stays uncapped. Applies in BOTH 2P and 4P.
+
+    Rationale (PI replays, two-plus days of observation): we scatter force across
+    several captures per round that fail to stick, peak on production, then get
+    overrun by a concentrated opponent strike. Committing ONE capture per round
+    concentrates force on a single attack that holds, while regrouping (defending /
+    reinforcing planets about to flip) continues unrestricted. The 'highest
+    confidence' selection is free: the value-ordered commit (LR_CONCENTRATE) already
+    sorts candidates by the native flip-hazard leaf, so the first capture kept is the
+    one most likely to stick. OFF = byte-identical (no cap). Read at call time."""
+    return _cfg("LR_ONE_CAPTURE").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _iterdeepen():
     """Anytime iterative deepening for the deep rollout (default 0 = OFF, fixed
     depth). When ON, _deep_pick deepens d=1..LR_ROLLOUT_DEPTH within the timebox,
@@ -634,183 +579,6 @@ def _iterdeepen():
     only the deepest COMPLETED level -- so a high LR_ROLLOUT_DEPTH cap is bounded
     by time per turn and never breaches the wall."""
     return _i("LR_ITERDEEPEN", 0) >= 1
-
-
-def _hold_source():
-    """Defensive-reserve gate (default OFF, byte-identical when OFF). When ON, a
-    planet may only contribute ships to an OFFENSIVE capture down to a floor =
-    the enemy mass physically reachable to THAT source within
-    LR_HOLD_SOURCE_REACH turns, scaled by LR_HOLD_SOURCE_MARGIN.
-
-    Diagnosis it fixes (PI ladder replays, seeds 25260880/788834306/1576908455):
-    the one-ply garrison-flow scorer models production + in-flight combat but NO
-    new opponent launches, so draining a source to fund a capture looks free --
-    the counterattack that flips the emptied source is invisible. The greedy
-    commit loop then strips our planets bare and we lose the sources ("we expose
-    our planets by attacking, not holding defense -- short-sighted"). This is the
-    SOURCE-side mirror of the existing target-side LR_HOLD_MARGIN: we already
-    size captures to HOLD THE TARGET; this makes us also HOLD THE SOURCE. Uses
-    the same reachable-enemy-mass signal as smart dropout, but binds it as a hard
-    sourcing constraint (so it changes the chosen action, unlike a soft score
-    perturbation, which prior sessions found inert)."""
-    return _i("LR_HOLD_SOURCE", 0) >= 1
-
-
-def _dropout_score():
-    """Dropout-perturbed-score gate (default OFF, byte-identical when OFF).
-
-    The "smart dropout opponent replacement" applied at the SCORE level. The
-    one-ply garrison-flow scorer models NO opponent launches, so reserve ships
-    left at home contribute zero projected value -- there is no reward for
-    defence, only for capturing, and the greedy loop over-commits (drains
-    sources -> loses them; too many fleets). This perturbs the projection: the
-    enemy's physically-reachable mass is baked onto each of our planets as a
-    credit-only "drop", and every candidate is scored a SECOND time in that
-    pessimist world. The two scores are blended (LR_DROPOUT_W, default 0.5). A
-    candidate that drains a source below its reachable enemy mass sees that
-    source FALL in the pessimist world -> lower score; reinforcing or simply
-    HOLDING a reserve makes the planet survive -> higher score. So "hold
-    defence" wins and the greedy loop stops sooner -- addressing the value
-    function, not the sourcing (where the LR_HOLD_SOURCE cap was inert)."""
-    return _i("LR_DROPOUT_SCORE", 0) >= 1
-
-
-def _concentrate():
-    """Force-concentration gate (default OFF, byte-identical when OFF). Adds a
-    decisive surplus to each capture size so the existing gang-up path combines
-    aligned sources into one strong strike and fewer fronts get committed --
-    'one aligned strong attack' emerges instead of scattered minimum captures.
-
-    Grounded in PI ladder replays + a fleet-size measurement: in losses we
-    fragment (our fleets ~19 mean vs Producer V2's ~32, 39% of launches < 10
-    ships); in wins we concentrate. A bigger required size means the cheapest
-    single source can't solo it, so the gang-up branch combines the nearest
-    sources (convergence) and draining more per strike leaves fewer ships for
-    additional fronts -- concentration emerges via GENERATION (the lever that
-    worked here historically), not a value tweak (three of which were inert)."""
-    return _i("LR_CONCENTRATE", 0) >= 1
-
-
-def _response_veto():
-    """Response-veto gate (default OFF, byte-identical when OFF). During the
-    greedy commit, a capture that DRAINS a source below the enemy mass reachable
-    to it is committed only if it does not regress the REAL two-ply value -- my
-    move + each opponent's producer-mirror reply, then one opponent reaction turn
-    (so the now-undefended source is actually taken). This is the accurate
-    counterattack check that the one-ply scorer (and the inert dropout proxy)
-    cannot be: it sees the opponent punish the drain and skips the capture, so we
-    stop stripping sources / over-committing. Cost is bounded -- only DRAINING
-    candidates trigger it, the shared opponent reply is computed once, the
-    reaction turn uses the cheap expansion policy, and it respects the per-turn
-    budget."""
-    return _i("LR_RESPONSE_VETO", 0) >= 1
-
-
-def _lr_drop_status(garrison_status, *, drop_tgt, drop_tick, drop_ships,
-                    drop_owner, prod, alive_by_step):
-    """Baseline garrison trajectories with our exposed planets flipped to the
-    rival (credit-only enemy arrivals, NO friendly source debit). Ported from
-    producer_plus._dropout_adjusted_status; replays the exact production->combat
-    recurrence so a flip propagates (lost production + garrison after the drop
-    tick). ``alive_by_step`` is ``[H+1, P]``."""
-    owner0 = garrison_status.owner[..., 0]                       # [P]
-    ships0 = garrison_status.ships[..., 0]                       # [P]
-    arr = garrison_status.arrivals_by_owner                      # [P, H+1, A]
-    P, H1, A = int(arr.shape[0]), int(arr.shape[1]), int(arr.shape[2])
-    H = H1 - 1
-    fdtype = ships0.dtype if ships0.is_floating_point() else _torch.float32
-
-    tgt = drop_tgt.clamp(0, max(P - 1, 0))
-    own = drop_owner.clamp(0, max(A - 1, 0))
-    ships = drop_ships.to(fdtype)
-    tick = drop_tick.long().clamp(min=1)
-
-    init_ships = ships0.to(fdtype).clone()                       # NO debit (credit-only)
-    arr_delta = arr[:, 1:, :].to(fdtype).clone()                 # [P, H, A]
-    in_h = tick <= H
-    if bool(in_h.any()):
-        arr_delta.index_put_(
-            (tgt[in_h], tick[in_h] - 1, own[in_h]), ships[in_h], accumulate=True,
-        )
-    owner_t, ships_t, pre_o, pre_s = _lr_recurrence(
-        init_owner=owner0.unsqueeze(0),
-        init_ships=init_ships.unsqueeze(0),
-        prod=prod.to(fdtype).unsqueeze(0),
-        alive=alive_by_step.transpose(0, 1).unsqueeze(0),
-        arrivals=arr_delta.unsqueeze(0),
-    )
-    return _PGS(
-        owner=owner_t[0], ships=ships_t[0],
-        pre_combat_owner=pre_o[0], pre_combat_ships=pre_s[0],
-        arrivals_by_owner=_torch.cat([arr[:, :1, :].to(fdtype), arr_delta], dim=1),
-    )
-
-
-def _hold_search():
-    """Hold-search (default OFF). When ON, add a few stronger-hold whole-turn
-    candidate plans for CONTESTED held planets to the 2-ply/deep rollout menu, so
-    that holding a contested planet decisively EMERGES from simulating the
-    opponent's retake (a thin hold gets flipped in the rollout and scores worse)
-    rather than from a reinforcement-sizing heuristic. The 1-ply launch scorer
-    cannot value a *prevented loss* (reinforcing our own planet shows ~0 net-ship
-    gain); the 2-ply/deep rollout against the opponent model can. OFF =
-    byte-identical (no extra plans on the menu)."""
-    return _i("LR_HOLD_SEARCH", 0) >= 1
-
-
-def _hold_search_range():
-    """Distance within which an in-flight enemy fleet counts toward the pressure
-    on one of our planets, for selecting which held planets to offer stronger-hold
-    plans for. Wider than the reactive-defense range so the rollout is offered the
-    decisive option before the wave is already on top of us."""
-    return _f("LR_HOLD_SEARCH_RANGE", 55.0)
-
-
-def _hold_search_levels():
-    """Hold-variant strengths (multiples of the detected incoming threat) offered
-    to the rollout for a contested planet. Default (1.25, 1.75) -- gentler than the
-    original (1.5, 2.5) so the menu cannot propose an over-commit that drains the
-    rest of the position. Override via LR_HOLD_SEARCH_LEVELS (comma-separated)."""
-    raw = os.environ.get("LR_HOLD_SEARCH_LEVELS", "")
-    if raw.strip():
-        try:
-            vals = tuple(float(x) for x in raw.split(",") if x.strip())
-            if vals:
-                return vals
-        except ValueError:
-            pass
-    return (1.25, 1.75)
-
-
-def _hold_donor_keep():
-    """Fraction of its own garrison each donor must RETAIN when feeding a
-    hold-search reinforcement (default 0.5). Caps the drain so a stronger-hold
-    variant can never strip a donor bare -- the over-hold catastrophic tail."""
-    return _f("LR_HOLD_DONOR_KEEP", 0.5)
-
-
-def _dropout():
-    """Dropout-risk rollout penalty (default 0 = OFF, byte-identical). When ON,
-    each candidate plan's leaf value is docked a MARGINAL penalty for the exposure
-    *this turn's action* creates: planets it CAPTURES that stay reachable by the
-    strongest rival ("attack far -> it falls back"), and sources it STRIPS thin
-    ("attack -> garrison falls -> flip"). The standing frontier (planets we already
-    held and did not weaken) is NOT penalised -- so over-extension/over-aggression
-    self-penalise without making us passive. Deterministic, no RNG. Mirrors the
-    producer_plus per-capture reflip rather than a blanket state penalty."""
-    return _i("LR_DROPOUT", 0) >= 1
-
-
-def _dropout_weight():
-    """Scale on the marginal exposure penalty (default 0.5). leaf_value -=
-    weight * (captured-exposure + stripped-source-exposure), in ship units."""
-    return _f("LR_DROPOUT_WEIGHT", 0.5)
-
-
-def _dropout_reach_pad():
-    """Slack (turns) on the reach test: a rival garrison can contest our planet
-    iff travel_turns <= H + pad. Default 0 (strict within-horizon)."""
-    return _f("LR_DROPOUT_REACH_PAD", 0.0)
 
 
 def _opponent_move_fn(tier=None):
@@ -821,8 +589,6 @@ def _opponent_move_fn(tier=None):
         tier = _deep_opp()
     if int(tier) == 1:
         return lambda obs_any, seat: lite_greedy_policy(obs_any)
-    if int(tier) == 2 and _V2_OK:
-        return _v2_move_obs
     return _producer_move_obs
 
 
@@ -958,55 +724,6 @@ def _build_orbit_scorer(obs, me):
     if _leader_relative_4p() and int(pc) >= 4:
         opp_w = _strongest_opp_weights(obs_tensors, me, int(pc))
 
-    # Dropout-perturbed score (default OFF): build ONE pessimist baseline where
-    # the enemy's physically-reachable mass falls on each of our planets (a
-    # credit-only "drop", strongest single hammer per planet). It is
-    # candidate-independent, so build it once; each candidate's launches are
-    # then scored against BOTH `status` and `pess_status` and blended below.
-    pess_status = None
-    drop_w = 0.0
-    if _dropout_score():
-        try:
-            drop_w = _f("LR_DROPOUT_W", 0.5)
-            planets_t = obs_tensors["planets"]
-            owner_col = planets_t[:, 1].long()
-            ships_col = planets_t[:, 5].to(_torch.float32)
-            # single_obs_to_tensor pads to a fixed slot count; padding slots carry
-            # owner 0, so mask to ALIVE real planets or the drop lands on phantoms.
-            alive0 = alive_by_step[0].to(_torch.bool)
-            is_enemy = (owner_col != int(me)) & (owner_col >= 0) & alive0
-            is_mine = (owner_col == int(me)) & alive0
-            rival, best_v = 0, -1.0
-            for pl in range(int(pc)):
-                if pl == int(me):
-                    continue
-                tot = float((ships_col * (owner_col == pl).to(_torch.float32)).sum())
-                if tot > best_v:
-                    best_v, rival = tot, pl
-            cache = _build_dist_cache(movement, max_k=int(H))
-            reach = _reach_enemy_mass(cross_dist=cache.cross_dist, ships=ships_col,
-                                      is_enemy=is_enemy, H=int(H), aggregate="max")  # [P,H+1]
-            pos = reach > 0.0                                       # [P, H+1]
-            Hh = int(H)
-            tick_idx = (_torch.arange(Hh + 1, dtype=_torch.float32)
-                        .unsqueeze(0).expand_as(reach))
-            masked = _torch.where(pos, tick_idx,
-                                  _torch.full_like(reach, float(Hh + 1)))
-            first_tick = masked.min(dim=1).values                  # [P] float
-            drop_mask = is_mine & pos.any(dim=1)                   # [P]
-            sel = drop_mask.nonzero(as_tuple=True)[0]
-            if drop_w > 0.0 and int(sel.numel()) > 0:
-                pess_status = _lr_drop_status(
-                    status, drop_tgt=sel.long(),
-                    drop_tick=first_tick[sel].long().clamp(min=1),
-                    drop_ships=reach[sel, Hh],
-                    drop_owner=_torch.full((int(sel.numel()),), int(rival),
-                                           dtype=_torch.long),
-                    prod=prod, alive_by_step=alive_by_step,
-                )
-        except Exception:
-            pess_status = None
-
     def score_units(units):
         if not units:
             return 0.0
@@ -1023,15 +740,7 @@ def _build_orbit_scorer(obs, me):
                 player_count=int(pc), launches=ls, player_id=int(me),
                 opp_weights=opp_w,
             )
-            val = float(sc.reshape(-1)[0])
-            if pess_status is not None:
-                sp = _score_candidates(
-                    pess_status, prod=prod, alive_by_step=alive_by_step,
-                    player_count=int(pc), launches=ls, player_id=int(me),
-                    opp_weights=opp_w,
-                )
-                val = (1.0 - drop_w) * val + drop_w * float(sp.reshape(-1)[0])
-        return val
+        return float(sc.reshape(-1)[0])
 
     return score_units, id2slot
 
@@ -1048,17 +757,6 @@ def _producer_move_obs(obs_any, seat):
         with _torch.no_grad():
             row = runtime.tensor_action(ot)
         return _sparse_action_row_to_moves(row, obs_any, player_id=int(seat))
-    except Exception:
-        return []
-
-
-def _v2_move_obs(obs_any, seat):
-    """V2's launches for `seat` -- the actual benchmark opponent used as the
-    search's per-node opponent model (LR_DEEP_OPP=2). V2 is stateless and reads
-    its seat from obs.player (like lite_greedy), so `seat` is unused. agent(obs)
-    already returns the [[src, angle, ships], ...] format step() consumes."""
-    try:
-        return _v2_agent(obs_any)
     except Exception:
         return []
 
@@ -1095,14 +793,6 @@ def _project_value(obs_any, me):
                 theirs = tot
     else:
         theirs = float((ships * ((owner != int(me)) & (owner >= 0)).to(_torch.float32)).sum())
-    if _win_leaf():
-        # Control share in [-1, 1]: optimize probability of finishing ahead, not
-        # expected ship surplus. Saturates, so the search secures leads instead of
-        # gambling for magnitude. denom <= 0 (no live military) -> neutral 0.
-        denom = mine + theirs
-        if denom <= 0.0:
-            return 0.0
-        return (mine - theirs) / denom
     return mine - theirs
 
 
@@ -1476,53 +1166,22 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=N
         opp_move_fn = _opponent_move_fn()
     snap = from_obs(obs, configuration, num_seats=num_seats)
     opps = [i for i in range(num_seats) if i != int(me)]
-    # Turn-1 opponent replies, precomputed ONCE and shared across all candidate
-    # plans -- valid because moves are simultaneous (the opponent can't see our
-    # plan). 2P (one opp) and 4P (three). Default: the single base reply (the
-    # LR_DEEP_OPP selection). Robust mode: a set of genuinely different policies
-    # (producer mirror + lite_greedy), scored worst-case in value() below.
-    if _robust_search():
-        reply_fns = [_producer_move_obs, lambda o, s: lite_greedy_policy(o)]
-    else:
-        reply_fns = [opp_move_fn]
-    opp_replies = [{i: fn(snap.state[i].observation, i) for i in opps}
-                   for fn in reply_fns]
-    drop_on = _dropout()
-    pre_owned, pre_ships = _dropout_prestate(obs, me) if drop_on else (None, None)
-
-    def _leaf(leaf_obs):
-        v = _project_value(leaf_obs, me)
-        if drop_on:
-            v -= _dropout_penalty(leaf_obs, me, pre_owned, pre_ships, num_seats)
-        return v
-
-    best_resp = _best_response()
+    # Every opponent's predicted move this turn; shared across candidates since
+    # moves are simultaneous (they don't see my plan). 2P (one opp) and 4P (three).
+    opp_now = {i: opp_move_fn(snap.state[i].observation, i) for i in opps}
 
     def value(plan):
-        if best_resp:
-            # Stackelberg: apply OUR plan alone, then the opponent best-responds to
-            # the resulting board (a tougher, clairvoyant adversary that punishes
-            # this plan's specific weakness). Single deterministic branch.
-            s = clone(snap)
-            acts = [[] for _ in range(num_seats)]
-            acts[int(me)] = list(plan)
-            step(s, acts, in_place=True)
-            if not s.fake_env.done:
-                nxt = [[] for _ in range(num_seats)]
-                for i in opps:
-                    nxt[i] = opp_move_fn(s.state[i].observation, i)
-                step(s, nxt, in_place=True)
-            try:
-                return _leaf(s.state[int(me)].observation)
-            except Exception:
-                return None
-        # Score the plan against every turn-1 reply; keep the WORST case (min).
-        # OFF -> opp_replies is a single element, so this is min-of-one == today.
-        worst = None
-        for opp_now in opp_replies:
-            s = clone(snap)
-            acts = [[] for _ in range(num_seats)]
-            acts[int(me)] = list(plan)
+        s = clone(snap)
+        acts = [[] for _ in range(num_seats)]
+        acts[int(me)] = list(plan)
+        for i in opps:
+            acts[i] = list(opp_now[i])
+        step(s, acts, in_place=True)
+        if not s.fake_env.done:
+            # One more turn of the opponents' pressure (each replies; we stay
+            # idle -- conservative, and it surfaces the next-turn punishment the
+            # 1-ply scorer misses).
+            nxt = [[] for _ in range(num_seats)]
             for i in opps:
                 nxt[i] = opp_move_fn(s.state[i].observation, i)
             step(s, nxt, in_place=True)
@@ -1565,16 +1224,8 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
     snap = from_obs(obs, configuration, num_seats=num_seats)
     opps = [i for i in range(num_seats) if i != int(me)]
     opp_now = {i: opp_move_fn(snap.state[i].observation, i) for i in opps}
-    drop_on = _dropout()
-    pre_owned, pre_ships = _dropout_prestate(obs, me) if drop_on else (None, None)
 
-    def _leaf(leaf_obs):
-        v = _project_value(leaf_obs, me)
-        if drop_on:
-            v -= _dropout_penalty(leaf_obs, me, pre_owned, pre_ships, num_seats)
-        return v
-
-    def rollout_value(plan, deadline_perf=None):
+    def rollout_value(plan):
         s = clone(snap)
         acts = [[] for _ in range(num_seats)]
         acts[int(me)] = list(plan)
@@ -1584,18 +1235,11 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
         for _ in range(max(0, int(depth) - 1)):
             if s.fake_env.done:
                 break
-            # Anytime guard: a single deep rollout must never overrun the turn
-            # wall. If the clock is spent, stop extending and score the current
-            # (shallower) leaf rather than running the remaining plies. This is
-            # what the depth-3 ladder submit lacked -- one full rollout could
-            # blow past 1000ms before the candidate-loop check fired -> ERROR.
-            if deadline_perf is not None and time.perf_counter() >= deadline_perf:
-                break
             nxt = [opp_move_fn(s.state[i].observation, i)
                    for i in range(num_seats)]
             step(s, nxt, in_place=True)
         try:
-            return _leaf(s.state[int(me)].observation)
+            return _project_value(s.state[int(me)].observation, me)
         except Exception:
             return None
 
@@ -1628,7 +1272,7 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
                            for i in range(num_seats)]
                     step(s, nxt, in_place=True)      # extend one ply
                 try:
-                    v = _leaf(s.state[int(me)].observation)
+                    v = _project_value(s.state[int(me)].observation, me)
                 except Exception:
                     v = None
                 if v is not None and (level_best_v is None or v > level_best_v):
@@ -1641,16 +1285,10 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
 
     best_plan, best_v = candidate_plans[0], None
     t0 = time.perf_counter()
-    deadline_perf = t0 + budget_ms / 1000.0
     for plan in candidate_plans:
-        # Guard EVERY candidate including the first: once the turn budget is
-        # spent we return the best legal move found so far. candidate_plans[0]
-        # is the pre-set fallback, so bailing even before candidate[0] is still
-        # a legal move. (The old guard skipped this check while best_v was None,
-        # so candidate[0] always ran a full unbounded rollout -> the overrun.)
-        if time.perf_counter() >= deadline_perf:
+        if best_v is not None and (time.perf_counter() - t0) * 1000.0 > budget_ms:
             break
-        v = rollout_value(plan, deadline_perf=deadline_perf)
+        v = rollout_value(plan)
         if v is None:
             continue
         if best_v is None or v > best_v:
@@ -1674,136 +1312,6 @@ def _comet_paths_by_id_safe(obs_d):
         return _comet_paths_by_id(_ObsRawShim(obs_d))
     except Exception:
         return {}
-
-
-def _reinforce_emit(target, total, avail, my_planets, comet_ids, comet_paths, omega):
-    """Build launches sending up to `total` ships to one of our own planets
-    (`target`) from our other planets, nearest first, drawing only on ships not
-    already committed this turn (`avail`). Does NOT mutate `avail` -- each
-    hold-search variant is an ALTERNATIVE plan, so they each draw independently
-    from the same pool; the rollout, not the bookkeeping, decides between them."""
-    txy = (float(target.x), float(target.y))
-    donors = sorted(
-        (p for p in my_planets
-         if int(p.id) != int(target.id) and avail.get(int(p.id), 0) > 0),
-        key=lambda p: dist(txy, (float(p.x), float(p.y))))
-    keep = _hold_donor_keep()
-    emit, acc = [], 0
-    for d in donors:
-        # leave each donor at least `keep` of its own garrison -- a hold variant
-        # must never strip a donor bare (the over-hold drain that lost the war).
-        spare = int(avail.get(int(d.id), 0)) - int(math.ceil(keep * float(d.ships)))
-        take = min(max(0, spare), int(total) - acc)
-        if take <= 0:
-            continue
-        shot = _plan_shot(d, target, comet_ids, comet_paths, omega, take)
-        if shot is None:
-            continue
-        angle, _eta, arr = shot
-        if not _sun_clear(d, arr):
-            continue
-        emit.append([int(d.id), float(angle), int(take)])
-        acc += take
-        if acc >= int(total):
-            break
-    return emit
-
-
-def _hold_search_plans(committed_emit, avail, my_planets, fleets, me,
-                       comet_ids, comet_paths, omega,
-                       max_targets=2, levels=None):
-    """Stronger-hold whole-turn plan variants for the rollout menu. For the most
-    valuable CONTESTED held planets (incoming enemy mass exceeds our garrison),
-    propose plans that pour extra ships into them at a couple of strengths, ON TOP
-    of the greedy plan. These are only *candidates*: the 2-ply/deep rollout scores
-    each against the opponent model and keeps one only if it actually survives the
-    retake -- so the hold LEVEL is chosen by simulation, and over-stripping a donor
-    is self-punished (the donor falls in the rollout -> lower leaf value)."""
-    if levels is None:
-        levels = _hold_search_levels()
-    enemy_fleets = [f for f in fleets
-                    if int(f.owner) != int(me) and int(f.owner) != -1]
-    if not enemy_fleets or not my_planets:
-        return []
-    rng = _hold_search_range()
-    contested = []
-    for mine in my_planets:
-        mxy = (float(mine.x), float(mine.y))
-        threat = sum(float(f.ships) for f in enemy_fleets
-                     if dist(mxy, (float(f.x), float(f.y))) <= rng)
-        if threat > float(mine.ships):
-            contested.append((float(mine.production), threat, mine))
-    if not contested:
-        return []
-    # Most valuable / most pressured first; a high-production planet under heavy
-    # incoming mass is exactly the take-and-hold target we were losing.
-    contested.sort(key=lambda c: (c[0], c[1]), reverse=True)
-    out = []
-    for _prod, threat, mine in contested[:max_targets]:
-        for k in levels:
-            need = int(math.ceil(k * threat)) - int(mine.ships)
-            if need <= 0:
-                continue
-            reinforce = _reinforce_emit(mine, need, avail, my_planets,
-                                        comet_ids, comet_paths, omega)
-            if reinforce:
-                out.append(list(committed_emit) + reinforce)
-    return out
-
-
-def _dropout_prestate(obs_any, me):
-    """Snapshot which planets we own and their garrisons BEFORE our move, so the
-    rollout penalty can charge only the exposure our action creates this turn."""
-    d = _as_dict(obs_any)
-    planets = d.get("planets", []) or []
-    owned, ships = set(), {}
-    for p in planets:
-        if int(p[1]) == int(me):
-            owned.add(int(p[0]))
-            ships[int(p[0])] = float(p[5])
-    return owned, ships
-
-
-def _dropout_penalty(leaf_obs, me, pre_owned, pre_ships, num_seats):
-    """Marginal exposure penalty (>=0) for a candidate plan, read off the rollout
-    leaf. Charges, in ship units scaled by _dropout_weight(): (a) planets we now
-    hold that we did NOT own pre-move (captures) and that the strongest rival can
-    still REACH within the horizon -> far/over-extended captures; (b) planets we
-    owned pre-move whose garrison FELL (sources we stripped) and are rival-
-    reachable -> over-aggression. The standing, un-weakened frontier is untouched."""
-    d = _as_dict(leaf_obs)
-    planets = d.get("planets", []) or []
-    rows = [(int(p[0]), int(p[1]), float(p[2]), float(p[3]), float(p[5]))
-            for p in planets]
-    tot = {}
-    for _pid, o, _x, _y, sh in rows:
-        if o != int(me) and o >= 0:
-            tot[o] = tot.get(o, 0.0) + sh
-    if not tot:
-        return 0.0
-    rival = max(tot.items(), key=lambda kv: (kv[1], -kv[0]))[0]  # deterministic
-    rival_planets = [(x, y, sh) for _pid, o, x, y, sh in rows if o == rival]
-    if not rival_planets:
-        return 0.0
-    H = PROJECT_HORIZON_4P if int(num_seats) >= 4 else PROJECT_HORIZON_2P
-    ref = max(1e-6, float(fleet_speed(FRONTIER_REF_SHIPS)))
-    budget = (float(int(H)) + _dropout_reach_pad()) * ref
-    eps, pen = 1e-6, 0.0
-    for pid, o, x, y, sh in rows:
-        if o != int(me):
-            continue
-        reach = sum(q for (qx, qy, q) in rival_planets
-                    if dist((x, y), (qx, qy)) <= budget)
-        if reach <= 0.0:
-            continue
-        contest = reach / (reach + sh + eps)
-        if pid not in pre_owned:
-            pen += contest * sh                       # captured & still exposed
-        else:
-            drop = pre_ships.get(pid, sh) - sh
-            if drop > 0.0:
-                pen += contest * drop                 # source we stripped, exposed
-    return _dropout_weight() * pen
 
 
 # --------------------------------------------------------------------------
@@ -2139,17 +1647,70 @@ def _robust_impact_pick(obs, configuration, me, num_seats, committed_caps,
     return plan
 
 
+def _cap_emit(action, obs_d, me):
+    """Enforce one-capture-per-round on the FINAL emitted move (PI 2026-06-23).
+
+    Keep every launch that does NOT clearly head at a non-our (enemy/neutral)
+    planet -- those are defensive regroup / reinforcement of our own planets, which
+    stays uncapped -- and, among launches that DO target non-our planets, keep only
+    the single target carrying the most ships (the highest-confidence attack). This
+    guarantees 'at most one capture attack per round, regrouping still happens'
+    regardless of which internal path produced the move. OFF -> unchanged. Read at
+    call time (env override) so the OFF path is byte-identical."""
+    if not action or not _one_capture():
+        return action
+    planets = obs_d.get("planets", []) or []
+    nonours = [p for p in planets if int(p[1]) != int(me)]
+    if not nonours:
+        return action
+    srcs = {int(p[0]): p for p in planets}
+    keep_ids = set()                      # launch objects to keep regardless (defense)
+    by_target = {}                        # tgt_id -> [total_ships, [launch, ...]]
+    for launch in action:
+        try:
+            sid = int(launch[0]); ang = float(launch[1]); ships = float(launch[2])
+        except (TypeError, ValueError, IndexError):
+            keep_ids.add(id(launch)); continue
+        s = srcs.get(sid)
+        if s is None:
+            keep_ids.add(id(launch)); continue
+        sx, sy = float(s[2]), float(s[3]); hx, hy = math.cos(ang), math.sin(ang)
+        best, bp = None, float("inf")
+        for p in nonours:
+            dx, dy = float(p[2]) - sx, float(p[3]) - sy
+            proj = dx * hx + dy * hy
+            if proj <= 0.0:
+                continue
+            d = math.hypot(dx, dy)
+            if d <= 1e-6:
+                continue
+            perp = abs(dx * (-hy) + dy * hx) / d
+            if perp <= 0.35 and proj < bp:
+                best, bp = int(p[0]), proj
+        if best is None:
+            keep_ids.add(id(launch))                  # not aimed at enemy/neutral -> keep
+        else:
+            ent = by_target.setdefault(best, [0.0, []])
+            ent[0] += ships; ent[1].append(launch)
+    if len(by_target) <= 1:
+        return action                                 # already <= 1 offensive target
+    best_tgt = max(by_target.items(), key=lambda kv: kv[1][0])[0]
+    for lh in by_target[best_tgt][1]:
+        keep_ids.add(id(lh))
+    return [a for a in action if id(a) in keep_ids]
+
+
 # --------------------------------------------------------------------------
 # The agent.
 #
 # IMPORTANT: kaggle_environments loads an agent file by picking the LAST
 # top-level callable in the module (see kaggle_environments/agent.py:
-# `[v for v in env.values() if callable(v)][-1]`). `agent` MUST therefore
-# remain the final def in this file — do NOT add any module-level function or
-# class below it, or that helper becomes the entry point and the agent idles
-# every turn (it returns a non-move value, which the env silently drops).
+# `[v for v in env.values() if callable(v)][-1]`). `agent` (the thin wrapper at
+# the very bottom) MUST remain the final def in this file — do NOT add any
+# module-level function or class below it, or that helper becomes the entry
+# point and the agent idles every turn (the env silently drops a non-move value).
 # --------------------------------------------------------------------------
-def agent(obs, configuration=None):
+def _agent_impl(obs, configuration=None):
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
     raw_planets = obs_d.get("planets", []) or []
@@ -2446,7 +2007,7 @@ def agent(obs, configuration=None):
         # actual size so the emit angle and the scorer eta are accurate.
         solo = None
         for (eta, size, sid, src, angle) in shots:
-            if avail_off[sid] >= size:
+            if available[sid] >= size:
                 shot = _plan_shot(src, tgt, comet_ids, comet_paths, omega, size)
                 if shot is None:
                     continue
@@ -2470,7 +2031,7 @@ def agent(obs, configuration=None):
         for (eta, size, sid, src, angle) in shots:
             if sid in srcs:
                 continue
-            take = min(avail_off[sid], need - acc)
+            take = min(available[sid], need - acc)
             if take <= 0:
                 continue
             shot = _plan_shot(src, tgt, comet_ids, comet_paths, omega, take)
@@ -2591,55 +2152,6 @@ def agent(obs, configuration=None):
     budget_ms = _value_budget(obs_d, _wallclock_ms())
     t0 = time.perf_counter()
 
-    # Response veto (default OFF): set up the reachable-enemy-mass per source and
-    # the shared opponent reply ONCE, so a draining capture can be re-checked
-    # against the real two-ply value inside the loop.
-    veto_on = _response_veto() and orbit is not None and num_seats >= 2
-    veto_reach = {}
-    v2snap = v2opps = v2opp_now = None
-    if veto_on:
-        try:
-            vreach = _f("LR_VETO_REACH", 8.0)
-            e_pl = [(float(p.x), float(p.y), float(p.ships)) for p in planets
-                    if int(p.owner) != me and int(p.owner) != -1]
-            e_fl = [(float(f.x), float(f.y), float(f.ships)) for f in fleets
-                    if int(f.owner) != me and int(f.owner) != -1]
-            for p in my_planets:
-                pxy = (float(p.x), float(p.y))
-                ham = 0.0
-                for (ex, ey, es) in e_pl:
-                    if dist((ex, ey), pxy) / ref_speed <= vreach and es > ham:
-                        ham = es
-                inb = sum(es for (ex, ey, es) in e_fl
-                          if dist((ex, ey), pxy) / ref_speed <= vreach)
-                veto_reach[int(p.id)] = ham + inb
-            v2snap = from_obs(obs, configuration, num_seats=num_seats)
-            v2opps = [i for i in range(num_seats) if i != me]
-            _omf = _opponent_move_fn()
-            v2opp_now = {i: _omf(v2snap.state[i].observation, i) for i in v2opps}
-        except Exception:
-            veto_on = False
-
-    def _veto_2ply(emit_plan):
-        """Value of emit_plan after my move + each opponent's (precomputed) mirror
-        reply, then one cheap opponent reaction turn (so a drained source is
-        actually taken). Higher = better for me; None on failure."""
-        try:
-            s = clone(v2snap)
-            acts = [[] for _ in range(num_seats)]
-            acts[int(me)] = list(emit_plan)
-            for i in v2opps:
-                acts[i] = list(v2opp_now[i])
-            step(s, acts, in_place=True)
-            if not s.fake_env.done:
-                nxt = [[] for _ in range(num_seats)]
-                for i in v2opps:
-                    nxt[i] = lite_greedy_policy(s.state[i].observation)
-                step(s, nxt, in_place=True)
-            return _project_value(s.state[int(me)].observation, me)
-        except Exception:
-            return None
-
     # Fundamental (default OFF, both modes): order captures by their VALUE under
     # the objective (highest win-equity first) instead of cheapness, spending
     # spare compute to score each once -- funds the captures that actually win
@@ -2663,11 +2175,22 @@ def agent(obs, configuration=None):
     _open_fronts = _infer_inflight_fronts(fleets, planets, me) if _front_cap_on else set()
     _new_front_budget = max(0, _i("LR_MAX_FRONTS", 2) - len(_open_fronts)) if _front_cap_on else 0
 
+    # One-capture-per-round cap (PI 2026-06-23, default OFF): commit at most
+    # LR_MAX_CAPTURES (default 1) OFFENSIVE captures per turn -- the single highest-
+    # confidence one, since candidates are value-ordered best-first -- while DEFENSIVE
+    # regroup (kind=="defend") stays uncapped. Both 2P and 4P. OFF = no cap (today).
+    _one_cap_on = _one_capture()
+    _max_caps = _i("LR_MAX_CAPTURES", 1)
+    _caps_committed = 0
+
     for c in candidates:
         if (time.perf_counter() - t0) * 1000.0 > budget_ms:
             break
         if any(avail.get(s, 0) < sz for s, sz in c["srcs"].items()):
             continue
+        is_capture = c.get("kind") != "defend"
+        if _one_cap_on and is_capture and _caps_committed >= _max_caps:
+            continue                          # one high-confidence attack this round; regroup still free
         is_new_front = (_front_cap_on and "tgt" in c and c.get("kind") != "defend"
                         and int(c["tgt"]) not in _open_fronts)
         if is_new_front and _new_front_budget <= 0:
@@ -2677,23 +2200,14 @@ def agent(obs, configuration=None):
         else:
             v = value_fallback(committed_emit + c["emit"])
         if v > current + floor:
-            # Response veto: a capture that drains a source below its reachable
-            # enemy mass must survive the real opponent reply (two-ply). If the
-            # opponent punishes the drain, skip this capture (keep the reserve).
-            if (veto_on and (time.perf_counter() - t0) * 1000.0 <= budget_ms
-                    and any((avail.get(s, 0) - sz) < veto_reach.get(s, 0.0)
-                            for s, sz in c["srcs"].items())):
-                base_2ply = _veto_2ply(committed_emit)
-                cand_2ply = _veto_2ply(committed_emit + c["emit"])
-                if (base_2ply is not None and cand_2ply is not None
-                        and cand_2ply < base_2ply - _f("LR_VETO_MARGIN", 0.0)):
-                    continue                         # opponent punishes the drain
             committed_emit = committed_emit + c["emit"]
             committed_units = committed_units + (c["units"] or [])
             committed_caps.append(c)
             current = v
             for s, sz in c["srcs"].items():
                 avail[s] = avail.get(s, 0) - sz
+            if is_capture:
+                _caps_committed += 1
             if is_new_front:
                 _open_fronts.add(int(c["tgt"]))
                 _new_front_budget -= 1
@@ -2706,6 +2220,11 @@ def agent(obs, configuration=None):
             producer_me = _producer_move_obs(obs, me)
         except Exception:
             producer_me = []
+        # One-capture cap (PI 2026-06-23): trim the producer-floor move to a single
+        # capture too, so the anti-passivity backstop can't reintroduce a multi-front
+        # move and what the 2-ply leaf scores is what we actually emit. OFF -> no-op.
+        if _one_cap_on:
+            producer_me = _cap_emit(producer_me, obs_d, me)
         # Levers 2/3 are 4P-only: 2P is our strength and these regress it.
         anytime_on = _anytime() and num_seats >= 4
         plans = [producer_me, committed_emit, []]   # producer floor first
@@ -2724,13 +2243,6 @@ def agent(obs, configuration=None):
         elif len(committed_emit) > 2:
             # One milder aggression level of my plan for the lookahead to weigh.
             plans.append(committed_emit[:len(committed_emit) // 2])
-        if _hold_search():
-            # Decisive holding emerges from the rollout, not a sizing rule: offer
-            # the search stronger-hold variants for contested held planets and let
-            # it keep one only if the opponent model can't flip it.
-            plans.extend(_hold_search_plans(
-                committed_emit, avail, my_planets, fleets, me,
-                comet_ids, comet_paths, omega))
         # De-dup (by repr) preserving order.
         seen, uniq = set(), []
         for p in plans:
@@ -2786,3 +2298,13 @@ def agent(obs, configuration=None):
             return committed_emit
 
     return committed_emit
+
+
+def agent(obs, configuration=None):
+    """Entry point (the LAST top-level callable, per the loader contract above).
+    Runs the planner, then enforces one-capture-per-round on the final emitted move
+    -- a guaranteed backstop for every internal path (2-ply / deep / robust / the
+    fallback). A no-op when LR_ONE_CAPTURE is off, so the OFF path is byte-identical."""
+    obs_d = _as_dict(obs)
+    return _cap_emit(_agent_impl(obs, configuration), obs_d,
+                     int(obs_d.get("player", 0)))

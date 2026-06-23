@@ -20,26 +20,6 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
 cp "$REPO/agents/least_resistance/main.py" "$STAGE/main.py"
-
-# Optional: bake default-OFF knobs ON for the bundle. LR_BAKE is a JSON dict of
-# {ENV_VAR: value}; injected as os.environ.setdefault(...) after the futures
-# header (which must remain first) so the shipped agent runs with these defaults
-# while the source default-OFF / OFF-path stays byte-identical.
-if [ -n "${LR_BAKE:-}" ]; then
-  python3 - "$STAGE/main.py" "$LR_BAKE" <<'PYEOF'
-import sys, json
-path, bake = sys.argv[1], json.loads(sys.argv[2])
-futures, rest = [], []
-for ln in open(path).read().split("\n"):
-    (futures if ln.strip().startswith("from __future__") else rest).append(ln)
-hdr = "import os as _lr_bake_os\n"
-for k, v in bake.items():
-    hdr += f'_lr_bake_os.environ.setdefault({k!r}, {str(v)!r})\n'
-open(path, "w").write("\n".join(futures) + "\n" + hdr + "\n".join(rest))
-print("baked knobs:", bake)
-PYEOF
-fi
-
 cp "$REPO/agents/producer/main.py"         "$STAGE/producer_main.py"
 cp -r "$REPO/agents/producer/orbit_lite"   "$STAGE/orbit_lite"
 cp -r "$REPO/lib"                          "$STAGE/lib"
